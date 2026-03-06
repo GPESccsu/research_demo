@@ -5,7 +5,7 @@
 // ═══════════════════════════════════════════════════════════
 
 const DB_NAME = "sciflow_db";
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 
 const STORES = {
   papers: { keyPath: "id", autoIncrement: true },
@@ -15,6 +15,7 @@ const STORES = {
   checklistData: { keyPath: "id" },
   writingDrafts: { keyPath: "id", autoIncrement: true },
   chatHistory: { keyPath: "id", autoIncrement: true },
+  uiState: { keyPath: "id" },
 };
 
 function openDB() {
@@ -233,6 +234,15 @@ export async function saveChatMessage(msg) {
 
 export async function clearChatHistory() {
   await dbClear("chatHistory");
+}
+
+// UI State
+export async function getUIState(id) {
+  return await dbGet("uiState", id);
+}
+
+export async function saveUIState(id, data) {
+  await dbPut("uiState", { id, ...data, updatedAt: Date.now() });
 }
 
 // Synonym Groups
