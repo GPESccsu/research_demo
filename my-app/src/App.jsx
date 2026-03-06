@@ -254,6 +254,60 @@ const CK_DATA = [
   { category:"数据与引用", items:[{text:"所有数据可追溯至原始记录",done:true},{text:"统计方法描述完整",done:false},{text:"引用文献均已阅读原文",done:false},{text:"无自引过多问题",done:true}]},
 ];
 
+const DEFAULT_TOPICS = [
+  { id: 1, name: "锌空气电池催化剂研究", status: "进行中" },
+];
+
+function parseRIS(content) {
+  const records = content.split(/\nER\s{0,2}-/).map(r => r.trim()).filter(Boolean);
+  return records.map((record) => {
+    const paper = { title: "", authors: "", journal: "", year: new Date().getFullYear(), tags: [], group: "导入文献", cited: 0 };
+    record.split(/\r?\n/).forEach((line) => {
+      const m = line.match(/^([A-Z0-9]{2})\s{0,2}-\s*(.*)$/);
+      if (!m) return;
+      const [, tag, value] = m;
+      if (tag === "TI") paper.title = value;
+      if (tag === "AU") paper.authors = paper.authors ? `${paper.authors}; ${value}` : value;
+      if (tag === "JO" || tag === "T2") paper.journal = value;
+      if (tag === "PY" || tag === "Y1") paper.year = parseInt(value, 10) || paper.year;
+      if (tag === "KW") paper.tags.push(value);
+    });
+    return paper;
+  }).filter(p => p.title);
+}
+
+function parseBibTeX(content) {
+  const entries = content.split(/@\w+\s*\{/).slice(1);
+  return entries.map((entry) => {
+    const getField = (field) => {
+      const r = new RegExp(`${field}\\s*=\\s*[{\"]([^}\"]+)`, "i");
+      return entry.match(r)?.[1]?.trim() || "";
+    };
+    const keywords = getField("keywords").split(/[;,]/).map(s => s.trim()).filter(Boolean);
+    return {
+      title: getField("title"),
+      authors: getField("author"),
+      journal: getField("journal") || getField("booktitle"),
+      year: parseInt(getField("year"), 10) || new Date().getFullYear(),
+      tags: keywords,
+      group: "导入文献",
+      cited: 0,
+    };
+  }).filter(p => p.title);
+}
+
+function papersToRIS(papers) {
+  return papers.map((p) => [
+    "TY  - JOUR",
+    `TI  - ${p.title}`,
+    ...(String(p.authors || "").split(";").map(a => a.trim()).filter(Boolean).map(a => `AU  - ${a}`)),
+    `JO  - ${p.journal || ""}`,
+    `PY  - ${p.year || ""}`,
+    ...(p.tags || []).map(t => `KW  - ${t}`),
+    "ER  -",
+  ].join("\n")).join("\n\n");
+}
+
 // ═══════════ STYLES ═══════════
 const CSS = `
 @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@300;400;500;600;700&family=Source+Serif+4:ital,wght@0,400;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;500&display=swap');
@@ -570,7 +624,7 @@ function SettingsPage({ config, setConfig }) {
 }
 
 // ═══════════ PAGE COMPONENTS (abbreviated, using config) ═══════════
-function DashboardPage({ setActiveModule, config }) {
+function DashboardPage({ setActiveModule, config, currentTopic }) {
   const prov = AI_PROVIDERS[config.provider];
   const [stats, setStats] = useState({papers:0,clips:0,chats:0,checkPct:0,checkRemain:0});
   useEffect(()=>{
@@ -588,7 +642,8 @@ function DashboardPage({ setActiveModule, config }) {
     <div>
       <div className="dashboard-hero fade-in">
         <div className="hero-greeting">欢迎回来，研究者 <span style={{fontSize:22}}>👋</span></div>
-        <div className="hero-subtitle">项目「锌空气电池催化剂研究」 — AI 引擎: {prov?.icon} {prov?.name}</div>
+        <div className="hero-subtitle">项目「{currentTopic?.name || "未命名课题"}」 — AI 引擎: {prov?.icon} {prov?.name}</div>
+        <div style={{fontSize:12,color:'var(--text-muted)',marginTop:6}}>数据层当前为 IndexedDB；已预留文献导入导出接口，便于后续对接 SQLite/服务端数据库。</div>
       </div>
       <div className="stats-row">{[{label:"文献总量",value:String(stats.papers),change:"数据库存储",color:"var(--accent-blue)"},{label:"素材片段",value:String(stats.clips||84),change:"持久化",color:"var(--accent-green)"},{label:"AI 对话",value:String(stats.chats),change:"已保存",color:"var(--ai-glow)"},{label:"自查进度",value:`${stats.checkPct}%`,change:`${stats.checkRemain}项待检`,color:"var(--accent-orange)"}].map((s,i)=>(
         <div key={i} className={`stat-card fade-in delay-${i+1}`}><div className="stat-label"><span style={{color:s.color}}>●</span>{s.label}</div><div className="stat-value" style={{color:s.color}}>{s.value}</div><div className="stat-change">{s.change}</div></div>
@@ -614,8 +669,23 @@ function TopicPage({ config }) {
   const [kw, setKw] = useState("锌空气电池催化剂");
   const [aiKw, setAiKw] = useState(null);
   const [ld, setLd] = useState(false);
+  const [searching, setSearching] = useState(false);
+  const [searchMsg, setSearchMsg] = useState("");
   const defs = [{word:"zinc-air battery",type:"同义词"},{word:"Zn-air battery",type:"同义词"},{word:"metal-air battery",type:"近义词"},{word:"oxygen reduction reaction",type:"跨学科"},{word:"bifunctional catalyst",type:"相关表达"}];
   const expand = async()=>{if(!kw.trim())return;setLd(true);setAiKw(null);const r=await callAIJSON(config,'你是学术关键词扩展助手。返回纯JSON:{"keywords":[{"word":"...","type":"同义词|近义词|跨学科|相关表达","reason":"..."}]}。8-12个英文关键词。',`扩展:"${kw}"`);setLd(false);if(r?.keywords)setAiKw(r.keywords);};
+  const runSearch = async () => {
+    setSearching(true);
+    setSearchMsg("");
+    const query = encodeURIComponent(kw || "zinc-air battery catalyst");
+    [
+      `https://www.scopus.com/results/results.uri?query=${query}`,
+      `https://www.webofscience.com/wos/woscc/basic-search?query=${query}`,
+      `https://kns.cnki.net/kns8s/basic?kw=${query}`,
+    ].forEach((url) => window.open(url, "_blank", "noopener"));
+    await new Promise((r) => setTimeout(r, 600));
+    setSearching(false);
+    setSearchMsg("已在新标签页打开 Scopus / WoS / CNKI 检索页面。");
+  };
   const kws=aiKw||defs;const cc=t=>t==="同义词"?"chip-synonym":t==="跨学科"?"chip-cross":t==="近义词"?"chip-related":"chip-ai";
   return(
     <div className="topic-layout">
@@ -629,7 +699,8 @@ function TopicPage({ config }) {
         <div className="search-formula">(<span className="formula-term">"zinc-air battery"</span> <span className="formula-op">OR</span> <span className="formula-term">"Zn-air battery"</span>)<br/><span className="formula-op">AND</span><br/>(<span className="formula-term">"catalyst"</span> <span className="formula-op">OR</span> <span className="formula-term">"electrocatalyst"</span>)<br/><span className="formula-op">AND</span><br/>(<span className="formula-term">"oxygen reduction"</span> <span className="formula-op">OR</span> <span className="formula-term">"oxygen evolution"</span>)</div>
         <div style={{fontSize:12,color:'var(--text-muted)',marginBottom:10}}>预估检索结果：</div>
         <div className="db-results"><div className="db-badge">Scopus <span className="db-count">2,847</span></div><div className="db-badge">WoS <span className="db-count">2,103</span></div><div className="db-badge">CNKI <span className="db-count">891</span></div></div>
-        <div style={{marginTop:14,display:'flex',gap:8}}><button className="btn btn-primary btn-sm">执行检索</button><button className="btn btn-secondary btn-sm">保存</button></div>
+        <div style={{marginTop:14,display:'flex',gap:8}}><button className="btn btn-primary btn-sm" onClick={runSearch} disabled={searching}>{searching?'检索中...':'执行检索'}</button><button className="btn btn-secondary btn-sm">保存</button></div>
+        {searchMsg && <div style={{marginTop:10,fontSize:12,color:'var(--accent-green)'}}>{searchMsg}</div>}
       </div></div></div>
     </div>);
 }
@@ -639,8 +710,8 @@ function KnowledgePage({ config }) {
   const [papers, setPapers] = useState(PAPERS);
   const [newPaper, setNewPaper] = useState(false);
   const [np, setNp] = useState({ title: "", authors: "", journal: "", year: 2024, tags: "", group: "核心文献" });
+  const importRef = useRef(null);
 
-  // Load papers from DB on mount
   useEffect(() => { getPapers().then(d => { if (d) setPapers(d); else savePapers(PAPERS.map((p,i) => ({...p, id: i+1}))); }); }, []);
 
   const handleAddPaper = async () => {
@@ -657,15 +728,41 @@ function KnowledgePage({ config }) {
     setPapers(prev => prev.filter(p => p.id !== id));
   };
 
+  const handleImport = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const content = await file.text();
+    const imported = file.name.toLowerCase().endsWith('.ris') ? parseRIS(content) : parseBibTeX(content);
+    for (const paper of imported) {
+      const id = await addPaper(paper);
+      setPapers(prev => [...prev, { ...paper, id }]);
+    }
+    e.target.value = '';
+  };
+
+  const exportRIS = () => {
+    const blob = new Blob([papersToRIS(papers)], { type: 'application/x-research-info-systems' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'sciflow-export.ris';
+    a.click();
+    URL.revokeObjectURL(a.href);
+  };
+
   const groupNames = [...new Set(papers.map(p => p.group))];
   const groups = [{ name: "全部", count: papers.length }, ...groupNames.map(g => ({ name: g, count: papers.filter(p => p.group === g).length }))];
   const filt=grp==="全部"?papers:papers.filter(p=>p.group===grp);
-  const doSum=async(p)=>{setSel(p);setSum("");setSL(true);const r=await callAI(config,'你是材料科学资深研究员。简析论文:1)核心问题 2)方法创新 3)结论 4)对锌空气电池课题参考价值。中文≤150字。',`标题:${p.title}\n作者:${p.authors}\n期刊:${p.journal}(${p.year})`,500);setSL(false);setSum(r||"AI不可用");};
+  const doSum=async(p)=>{setSel(p);setSum("");setSL(true);const r=await callAI(config,'你是材料科学资深研究员。简析论文:1)核心问题 2)方法创新 3)结论 4)对锌空气电池课题参考价值。中文≤150字。',`标题:${p.title}
+作者:${p.authors}
+期刊:${p.journal}(${p.year})`,500);setSL(false);setSum(r||"AI不可用");};
   return(
     <div className="kb-layout">
       <div className="kb-sidebar fade-in"><div style={{fontSize:10,fontWeight:700,color:'var(--text-muted)',marginBottom:8,textTransform:'uppercase',letterSpacing:1.5}}>文献分组</div>
         {groups.map(g=><div key={g.name} className={`group-item ${grp===g.name?'active':''}`} onClick={()=>setGrp(g.name)}><Icons.Folder/>{g.name}<span className="group-count">{g.count}</span></div>)}
         <button className="btn btn-primary btn-sm" style={{marginTop:12,width:'100%'}} onClick={()=>setNewPaper(true)}><Icons.Plus/>添加文献</button>
+        <button className="btn btn-secondary btn-sm" style={{marginTop:8,width:'100%'}} onClick={()=>importRef.current?.click()}>导入 RIS/BibTeX</button>
+        <button className="btn btn-secondary btn-sm" style={{marginTop:8,width:'100%'}} onClick={exportRIS}>导出 RIS</button>
+        <input ref={importRef} type="file" accept=".ris,.bib,.bibtex" style={{display:'none'}} onChange={handleImport}/>
       </div>
       <div className="fade-in delay-1" style={{display:'flex',flexDirection:'column',gap:8,overflow:'auto'}}>
         {newPaper && (
@@ -678,7 +775,7 @@ function KnowledgePage({ config }) {
             </div>
           </div>
         )}
-        {filt.map(p=><div key={p.id} className="paper-card"><div style={{display:'flex',alignItems:'flex-start',justifyContent:'space-between'}}><div style={{flex:1}}><div className="paper-title">{p.title}</div><div className="paper-meta"><span className="paper-journal">{p.journal}</span><span>{p.authors}</span><span>{p.year}</span><span style={{color:'var(--accent-amber)'}}>✦{p.cited}</span></div><div className="paper-tags">{p.tags.map(t=><span key={t} className="paper-tag">{t}</span>)}</div></div><div style={{display:'flex',gap:6,flexShrink:0,marginLeft:10}}><button className="btn btn-ai btn-sm" onClick={()=>doSum(p)}><Icons.Sparkle/>AI分析</button><button className="btn btn-secondary btn-sm" onClick={()=>handleDeletePaper(p.id)} style={{color:'var(--accent-pink)'}}>删除</button></div></div>
+        {filt.map(p=><div key={p.id} className="paper-card"><div style={{display:'flex',alignItems:'flex-start',justifyContent:'space-between'}}><div style={{flex:1}}><div className="paper-title">{p.title}</div><div className="paper-meta"><span className="paper-journal">{p.journal}</span><span>{p.authors}</span><span>{p.year}</span><span style={{color:'var(--accent-amber)'}}>✦{p.cited}</span></div><div className="paper-tags">{(p.tags||[]).map(t=><span key={t} className="paper-tag">{t}</span>)}</div></div><div style={{display:'flex',gap:6,flexShrink:0,marginLeft:10}}><button className="btn btn-ai btn-sm" onClick={()=>doSum(p)}><Icons.Sparkle/>AI分析</button><button className="btn btn-secondary btn-sm" onClick={()=>handleDeletePaper(p.id)} style={{color:'var(--accent-pink)'}}>删除</button></div></div>
           {sel?.id===p.id&&<div className="ai-summary-panel"><div className="ai-summary-header"><Icons.Sparkle/>AI文献分析</div>{sL?<TypingDots/>:<div className="ai-summary-text">{sum}</div>}</div>}
         </div>)}
       </div>
@@ -687,8 +784,10 @@ function KnowledgePage({ config }) {
 
 function ExperimentPage({ config }) {
   const [di, setDi] = useState("");const [dr, setDr] = useState("");const [dL, setDL] = useState(false);
+  const [nodes, setNodes] = useState([{id:1,level:1,label:"研究意义",text:"开发高效低成本锌空气电池催化剂",color:"var(--accent-amber)"},{id:2,level:1,label:"关键问题",text:"如何提升 Co₃O₄ 的 OER/ORR 双功能性能？",color:"var(--accent-amber)"},{id:3,level:2,label:"子问题 1",text:"形貌调控对催化活性的影响",refs:"Zhang 2024",color:"var(--accent-blue)"},{id:4,level:2,label:"子问题 2",text:"N 掺杂优化电子结构",refs:"Chen 2023",color:"var(--accent-blue)"},{id:5,level:3,label:"实验变量",text:"合成温度、前驱体浓度、N源",color:"var(--accent-green)"},{id:6,level:3,label:"表征",text:"XRD, SEM, TEM, XPS",color:"var(--accent-green)"}]);
   const diag=async()=>{if(!di.trim())return;setDL(true);setDr("");const r=await callAI(config,'你是材料科学实验导师。分析实验异常:1)2-3个原因 2)排查路径 3)解决建议。中文≤200字。',di,600);setDL(false);setDr(r||"AI不可用");};
-  const nodes=[{level:1,label:"研究意义",text:"开发高效低成本锌空气电池催化剂",color:"var(--accent-amber)"},{level:1,label:"关键问题",text:"如何提升 Co₃O₄ 的 OER/ORR 双功能性能？",color:"var(--accent-amber)"},{level:2,label:"子问题 1",text:"形貌调控对催化活性的影响",refs:"Zhang 2024",color:"var(--accent-blue)"},{level:2,label:"子问题 2",text:"N 掺杂优化电子结构",refs:"Chen 2023",color:"var(--accent-blue)"},{level:3,label:"实验变量",text:"合成温度、前驱体浓度、N源",color:"var(--accent-green)"},{level:3,label:"表征",text:"XRD, SEM, TEM, XPS",color:"var(--accent-green)"}];
+  const updateNode = (id, key, value) => setNodes(prev => prev.map(n => n.id===id?{...n,[key]:value}:n));
+  const addNode = () => setNodes(prev => [...prev, {id:Date.now(), level:2, label:'新节点', text:'可编辑内容', refs:'', color:'var(--accent-blue)'}]);
   return(
     <div>
       <div className="panel fade-in" style={{marginBottom:16}}><div className="panel-header"><Icons.Wand/>AI 问题诊断器<AIBadge/></div><div className="panel-body">
@@ -697,37 +796,63 @@ function ExperimentPage({ config }) {
         {dL&&<div style={{marginTop:10}}><TypingDots/></div>}
         {dr&&!dL&&<div className="ai-summary-panel" style={{marginTop:10}}><div className="ai-summary-header"><Icons.Sparkle/>诊断结果</div><div className="ai-summary-text">{dr}</div></div>}
       </div></div>
-      <div className="section-header"><div className="section-title">问题分解树</div></div>
-      <div style={{display:'flex',flexDirection:'column',gap:10}}>{nodes.map((n,i)=><div key={i} className={`tree-node tree-level-${n.level} fade-in delay-${(i%4)+1}`}><div className="tree-node-label" style={{color:n.color}}>{n.label}</div><div className="tree-node-text">{n.text}</div>{n.refs&&<div className="tree-node-refs"><Icons.Book/>关联:{n.refs}</div>}</div>)}</div>
+      <div className="section-header"><div className="section-title">问题分解树</div><button className="btn btn-secondary btn-sm" onClick={addNode}><Icons.Plus/>新增节点</button></div>
+      <div style={{display:'flex',flexDirection:'column',gap:10}}>{nodes.map((n,i)=><div key={n.id} className={`tree-node tree-level-${n.level} fade-in delay-${(i%4)+1}`}><input className="input-field" style={{marginBottom:6,maxWidth:220,color:n.color,fontWeight:600}} value={n.label} onChange={e=>updateNode(n.id,'label',e.target.value)}/><textarea className="input-field" rows={2} value={n.text} onChange={e=>updateNode(n.id,'text',e.target.value)} style={{resize:'vertical'}}/>{n.refs!==undefined&&<input className="input-field" style={{marginTop:6}} placeholder="关联文献" value={n.refs||''} onChange={e=>updateNode(n.id,'refs',e.target.value)}/>}</div>)}</div>
     </div>);
 }
 
 function WritingPage({ config }) {
   const [sec, setSec] = useState("intro");
-  const defaultText = "锌空气电池因其理论能量密度高、成本低廉、环境友好等优点，被认为是下一代可持续能源存储技术的有力候选方案。\n\n近年来，过渡金属氧化物成为替代贵金属催化剂的研究热点。\n\n尽管已有大量研究，但对其构效关系的理解仍不够深入。";
+  const defaultText = `锌空气电池因其理论能量密度高、成本低廉、环境友好等优点，被认为是下一代可持续能源存储技术的有力候选方案。
+
+近年来，过渡金属氧化物成为替代贵金属催化剂的研究热点。
+
+尽管已有大量研究，但对其构效关系的理解仍不够深入。`;
   const [text, setText] = useState(defaultText);
 
-  // Load and save drafts
   useEffect(() => { getDrafts().then(d => { const found = d.find(x => x.id === sec); if (found) setText(found.content); }); }, [sec]);
   const saveText = useCallback((val) => { setText(val); saveDraft({ id: sec, content: val, updatedAt: Date.now() }); }, [sec]);
   const [sug, setSug] = useState([]);const [aL, setAL] = useState(false);const [aq, setAq] = useState("");
   const outline=[{id:"abstract",label:"摘要"},{id:"intro",label:"1. 引言"},{id:"intro-bg",label:"1.1 背景",sub:true},{id:"methods",label:"2. 实验方法"},{id:"results",label:"3. 结果讨论"},{id:"conclusion",label:"4. 结论"}];
-  const analyze=async()=>{setAL(true);setSug([]);const r=await callAIJSON(config,'学术写作教授。分析论文段落。返回JSON:{"suggestions":[{"type":"观点检查|逻辑分析|语言润色|引用建议","content":"...","priority":"high|medium|low"}]}。3-4条。',`引言:\n${text}`,800);setAL(false);if(r?.suggestions)setSug(r.suggestions);};
-  const ask=async()=>{if(!aq.trim())return;const q=aq;setAq("");setAL(true);const r=await callAI(config,'锌空气电池论文写作助手。中文≤150字。',`段落:\n${text}\n\n问题:${q}`,500);setAL(false);if(r)setSug(p=>[...p,{type:"AI 回答",content:r,priority:"high"}]);};
+  const analyze=async()=>{setAL(true);setSug([]);const r=await callAIJSON(config,'学术写作教授。分析论文段落。返回JSON:{"suggestions":[{"type":"观点检查|逻辑分析|语言润色|引用建议","content":"...","priority":"high|medium|low"}]}。3-4条。',`引言:
+${text}`,800);setAL(false);if(r?.suggestions)setSug(r.suggestions);};
+  const ask=async()=>{if(!aq.trim())return;const q=aq;setAq("");setAL(true);const r=await callAI(config,'锌空气电池论文写作助手。中文≤150字。',`段落:
+${text}
+
+问题:${q}`,500);setAL(false);if(r)setSug(p=>[...p,{type:"AI 回答",content:r,priority:"high"}]);};
   const pc={high:'var(--accent-orange)',medium:'var(--accent-amber)',low:'var(--accent-blue)'};
+  const editSuggestion = (i, val) => setSug(prev => prev.map((s,idx)=>idx===i?{...s, content:val}:s));
   return(
     <div className="writing-layout">
       <div className="writing-outline fade-in"><div style={{fontSize:10,fontWeight:700,color:'var(--text-muted)',marginBottom:8,textTransform:'uppercase',letterSpacing:1.5}}>大纲</div>{outline.map(o=><div key={o.id} className={`outline-item ${o.sub?'outline-sub':''} ${sec===o.id?'active':''}`} onClick={()=>setSec(o.id)}>{!o.sub&&<Icons.ChevronRight/>}{o.label}</div>)}</div>
-      <div className="writing-editor fade-in delay-1"><div className="editor-toolbar">{["B","I","H2","引用"].map(b=><button key={b} className="tool-btn">{b}</button>)}<div style={{marginLeft:'auto'}}><button className="tool-btn ai-tool" onClick={analyze} disabled={aL}><Icons.Sparkle/>AI 分析</button></div></div><div style={{flex:1,padding:'20px',overflow:'auto'}}><h2 style={{fontFamily:'var(--font-serif)',fontSize:20,fontWeight:700,marginBottom:14}}>1. 引言</h2><textarea className="editor-textarea" value={text} onChange={e=>saveText(e.target.value)} style={{minHeight:260}}/></div></div>
+      <div className="writing-editor fade-in delay-1"><div className="editor-toolbar">{"B,I,H2,引用".split(',').map(b=><button key={b} className="tool-btn">{b}</button>)}<div style={{marginLeft:'auto'}}><button className="tool-btn ai-tool" onClick={analyze} disabled={aL}><Icons.Sparkle/>AI 分析</button></div></div><div style={{flex:1,padding:'20px',overflow:'auto'}}><h2 style={{fontFamily:'var(--font-serif)',fontSize:20,fontWeight:700,marginBottom:14}}>1. 引言</h2><textarea className="editor-textarea" value={text} onChange={e=>saveText(e.target.value)} style={{minHeight:260}}/></div></div>
       <div className="writing-ai-panel fade-in delay-2"><div className="ai-panel-header"><Icons.Sparkle/>AI 写作助手<AIBadge/></div><div className="ai-panel-body">
         {sug.length===0&&!aL&&<div style={{textAlign:'center',padding:'32px 16px',color:'var(--text-muted)',fontSize:13}}><div style={{fontSize:28,marginBottom:10,opacity:.4}}>✨</div>点击「AI 分析」获取建议</div>}
         {aL&&<div className="ai-suggestion"><div className="ai-suggestion-label"><Icons.Sparkle/>分析中...</div><TypingDots/></div>}
-        {sug.map((s,i)=><div key={i} className="ai-suggestion"><div className="ai-suggestion-label"><span style={{width:6,height:6,borderRadius:'50%',background:pc[s.priority]||'var(--ai-glow)'}}/>{s.type}</div><div style={{whiteSpace:'pre-wrap'}}>{s.content}</div></div>)}
+        {sug.map((s,i)=><div key={i} className="ai-suggestion"><div className="ai-suggestion-label"><span style={{width:6,height:6,borderRadius:'50%',background:pc[s.priority]||'var(--ai-glow)'}}/>{s.type}<button className="btn btn-secondary btn-sm" style={{marginLeft:'auto',padding:'2px 8px'}} onClick={()=>setSug(prev=>prev.filter((_,idx)=>idx!==i))}>删除</button></div><textarea className="input-field" rows={3} value={s.content} onChange={e=>editSuggestion(i,e.target.value)} style={{marginTop:6,resize:'vertical'}}/></div>)}
       </div><div className="ai-panel-input"><input value={aq} onChange={e=>setAq(e.target.value)} placeholder="问AI..." onKeyDown={e=>e.key==='Enter'&&ask()}/><button className="btn btn-ai btn-sm" onClick={ask} disabled={!aq.trim()||aL}><Icons.Send/></button></div></div>
     </div>);
 }
 
-function ReadingPage(){return(<div className="panel fade-in"><div className="panel-header"><Icons.Book/>PDF 阅读器 & 素材截取</div><div className="panel-body"><div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:16}}><div style={{background:'var(--bg-deep)',borderRadius:'var(--radius-sm)',border:'1px solid var(--border)',padding:24,minHeight:260,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',gap:12}}><div style={{fontSize:48,opacity:.3}}>📄</div><div style={{color:'var(--text-muted)',fontSize:14,textAlign:'center'}}>拖入 PDF 开始阅读</div><button className="btn btn-secondary" style={{marginTop:6}}>选择文件</button></div><div><div style={{fontSize:13,fontWeight:600,marginBottom:10}}>素材库</div><div style={{display:'flex',flexDirection:'column',gap:6}}>{[{f:"前言素材",c:23,i:"📝"},{f:"实验方法",c:15,i:"🧪"},{f:"结果讨论",c:31,i:"📊"},{f:"图片素材",c:42,i:"🖼"}].map((x,i)=><div key={i} style={{padding:'11px 14px',background:'var(--bg-elevated)',border:'1px solid var(--border)',borderRadius:'var(--radius-sm)',display:'flex',alignItems:'center',gap:10}}><span style={{fontSize:16}}>{x.i}</span><span style={{fontSize:13,fontWeight:500,flex:1}}>{x.f}</span><span style={{fontSize:12,fontFamily:'var(--font-mono)',color:'var(--text-muted)'}}>{x.c}</span></div>)}</div></div></div></div></div>);}
+function ReadingPage(){
+  const [pdfName, setPdfName] = useState('');
+  const [clipText, setClipText] = useState('');
+  const [msg, setMsg] = useState('');
+  const [clips, setClips] = useState([{f:"前言素材",c:23,i:"📝"},{f:"实验方法",c:15,i:"🧪"},{f:"结果讨论",c:31,i:"📊"},{f:"图片素材",c:42,i:"🖼"}]);
+  const importPdf = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setPdfName(file.name);
+    setMsg('已加载 PDF 文件（当前版本提供手动摘录，自动结构化提取后续接入）。');
+  };
+  const addManualClip = () => {
+    if (!clipText.trim()) return;
+    setClips(prev => [{f:'手动摘录', c:clipText.length, i:'✂️'}, ...prev]);
+    setClipText('');
+    setMsg('素材已加入素材库。');
+  };
+  return(<div className="panel fade-in"><div className="panel-header"><Icons.Book/>PDF 阅读器 & 素材截取</div><div className="panel-body"><div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:16}}><div style={{background:'var(--bg-deep)',borderRadius:'var(--radius-sm)',border:'1px solid var(--border)',padding:24,minHeight:260,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',gap:12}}><div style={{fontSize:48,opacity:.3}}>📄</div><div style={{color:'var(--text-muted)',fontSize:14,textAlign:'center'}}>{pdfName?`已选择: ${pdfName}`:'拖入 PDF 开始阅读'}</div><label className="btn btn-secondary" style={{marginTop:6,cursor:'pointer'}}>选择文件<input type="file" accept="application/pdf" style={{display:'none'}} onChange={importPdf}/></label><textarea className="input-field" rows={4} placeholder="粘贴从 PDF 中摘录的素材..." value={clipText} onChange={e=>setClipText(e.target.value)} style={{width:'100%',marginTop:8,resize:'vertical'}}/><button className="btn btn-primary btn-sm" onClick={addManualClip}>提取到素材库</button>{msg&&<div style={{fontSize:12,color:'var(--accent-green)',textAlign:'center'}}>{msg}</div>}</div><div><div style={{fontSize:13,fontWeight:600,marginBottom:10}}>素材库</div><div style={{display:'flex',flexDirection:'column',gap:6}}>{clips.map((x,i)=><div key={i} style={{padding:'11px 14px',background:'var(--bg-elevated)',border:'1px solid var(--border)',borderRadius:'var(--radius-sm)',display:'flex',alignItems:'center',gap:10}}><span style={{fontSize:16}}>{x.i}</span><span style={{fontSize:13,fontWeight:500,flex:1}}>{x.f}</span><span style={{fontSize:12,fontFamily:'var(--font-mono)',color:'var(--text-muted)'}}>{x.c}</span></div>)}</div></div></div></div></div>);
+}
 
 function ChecklistPage(){const[data,setData]=useState(CK_DATA);
   useEffect(()=>{getChecklist().then(d=>{if(d)setData(d);else saveChecklist(CK_DATA);});}, []);
@@ -804,6 +929,9 @@ export default function SciFlowApp() {
   const [activeModule, setActiveModule] = useState("home");
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [config, setConfig] = useState(() => loadConfig(DEFAULT_CONFIG));
+  const [topics, setTopics] = useState(DEFAULT_TOPICS);
+  const [topicName, setTopicName] = useState("");
+  const [activeTopicId, setActiveTopicId] = useState(DEFAULT_TOPICS[0].id);
 
   // Persist AI config to localStorage whenever it changes
   useEffect(() => { saveConfig(config); }, [config]);
@@ -813,7 +941,7 @@ export default function SciFlowApp() {
 
   const render = () => {
     switch (activeModule) {
-      case "home": return <DashboardPage setActiveModule={setActiveModule} config={config} />;
+      case "home": return <DashboardPage setActiveModule={setActiveModule} config={config} currentTopic={currentTopic} />;
       case "settings": return <SettingsPage config={config} setConfig={setConfig} />;
       case "topic": return <TopicPage config={config} />;
       case "knowledge": return <KnowledgePage config={config} />;
@@ -822,11 +950,19 @@ export default function SciFlowApp() {
       case "writing": return <WritingPage config={config} />;
       case "checklist": return <ChecklistPage />;
       case "lablog": return <LabLogPage />;
-      default: return <DashboardPage setActiveModule={setActiveModule} config={config} />;
+      default: return <DashboardPage setActiveModule={setActiveModule} config={config} currentTopic={currentTopic} />;
     }
   };
 
   const provInfo = AI_PROVIDERS[config.provider];
+  const currentTopic = topics.find(t => t.id === activeTopicId) || topics[0];
+  const addTopic = () => {
+    if (!topicName.trim()) return;
+    const t = { id: Date.now(), name: topicName.trim(), status: "进行中" };
+    setTopics(prev => [...prev, t]);
+    setActiveTopicId(t.id);
+    setTopicName("");
+  };
 
   return (
     <AIConfigContext.Provider value={config}>
@@ -836,7 +972,11 @@ export default function SciFlowApp() {
         <aside className={`sidebar ${sidebarOpen ? 'open' : ''}`}>
           <div className="sidebar-header">
             <div className="sidebar-logo"><div className="logo-mark">SF</div><span className="logo-text">SciFlow</span></div>
-            <div className="project-selector"><span className="project-name">锌空气电池催化剂研究</span><span className="project-tag">进行中</span></div>
+            <div style={{display:'flex',flexDirection:'column',gap:8}}>
+              <div className="project-selector"><span className="project-name">{currentTopic?.name}</span><span className="project-tag">{currentTopic?.status}</span></div>
+              <select className="input-field" value={activeTopicId} onChange={e=>setActiveTopicId(Number(e.target.value))}>{topics.map(t=><option key={t.id} value={t.id}>{t.name}</option>)}</select>
+              <div style={{display:'flex',gap:6}}><input className="input-field" placeholder="新增课题" value={topicName} onChange={e=>setTopicName(e.target.value)}/><button className="btn btn-secondary btn-sm" onClick={addTopic}><Icons.Plus/></button></div>
+            </div>
           </div>
           <nav className="sidebar-nav">
             <div className={`nav-item ${activeModule === 'home' ? 'active' : ''}`} onClick={() => { setActiveModule('home'); setSidebarOpen(false); }}>
