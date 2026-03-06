@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback, createContext, useContext } from "react";
+import { saveConfig, loadConfig, getPapers, savePapers, addPaper, deletePaper, getLogs, saveLogs, addLog, getChecklist, saveChecklist, getChatHistory, saveChatMessage, clearChatHistory, getSynonymGroups, saveSynonymGroup, deleteSynonymGroup, getClips, addClip, getDrafts, saveDraft } from "./db.js";
 
 // ═══════════════════════════════════════════════════════════
 // SCIFLOW — AI-POWERED RESEARCH ASSISTANT
@@ -17,6 +18,21 @@ const AI_PROVIDERS = {
       { id: "claude-haiku-4-5-20251001", name: "Claude Haiku 4.5", desc: "最快响应，适合简单任务" },
     ],
     format: "anthropic",
+  },
+  openai: {
+    id: "openai", name: "OpenAI ChatGPT", icon: "🟢", type: "cloud",
+    description: "ChatGPT 系列模型，通用能力强，学术写作与代码生成优秀",
+    baseUrl: "https://api.openai.com/v1/chat/completions",
+    requiresKey: true, keyPlaceholder: "sk-...",
+    signupUrl: "https://platform.openai.com/api-keys",
+    models: [
+      { id: "gpt-4o", name: "GPT-4o", desc: "最新旗舰，多模态能力强", default: true },
+      { id: "gpt-4o-mini", name: "GPT-4o Mini", desc: "轻量快速，性价比高" },
+      { id: "gpt-4-turbo", name: "GPT-4 Turbo", desc: "大上下文，推理强" },
+      { id: "gpt-3.5-turbo", name: "GPT-3.5 Turbo", desc: "经济实惠，速度快" },
+      { id: "o1-mini", name: "o1-mini", desc: "推理模型，深度思考" },
+    ],
+    format: "openai",
   },
   ollama: {
     id: "ollama", name: "Ollama (本地)", icon: "🦙", type: "local",
@@ -467,7 +483,7 @@ function SettingsPage({ config, setConfig }) {
               <input className="input-field" type="password" value={config.apiKey}
                 onChange={e => setConfig(c => ({ ...c, apiKey: e.target.value }))}
                 placeholder={provider.keyPlaceholder} />
-              <div className="form-hint">密钥仅保存在浏览器内存中，刷新页面后需重新输入</div>
+              <div className="form-hint">密钥保存在浏览器本地存储中，刷新页面后自动恢复</div>
             </div>
           )}
 
@@ -556,13 +572,25 @@ function SettingsPage({ config, setConfig }) {
 // ═══════════ PAGE COMPONENTS (abbreviated, using config) ═══════════
 function DashboardPage({ setActiveModule, config }) {
   const prov = AI_PROVIDERS[config.provider];
+  const [stats, setStats] = useState({papers:0,clips:0,chats:0,checkPct:0,checkRemain:0});
+  useEffect(()=>{
+    Promise.all([getPapers(), getClips(), getChatHistory(), getChecklist()]).then(([papers, clips, chats, ck])=>{
+      const p = papers?.length || PAPERS.length;
+      const cl = clips?.length || 0;
+      const ch = chats?.length || 0;
+      const ckData = ck || CK_DATA;
+      const td = ckData.reduce((s,c)=>s+c.items.filter(i=>i.done).length,0);
+      const tt = ckData.reduce((s,c)=>s+c.items.length,0);
+      setStats({papers:p, clips:cl, chats:ch, checkPct:tt?Math.round(td/tt*100):0, checkRemain:tt-td});
+    });
+  }, []);
   return (
     <div>
       <div className="dashboard-hero fade-in">
         <div className="hero-greeting">欢迎回来，研究者 <span style={{fontSize:22}}>👋</span></div>
         <div className="hero-subtitle">项目「锌空气电池催化剂研究」 — AI 引擎: {prov?.icon} {prov?.name}</div>
       </div>
-      <div className="stats-row">{[{label:"文献总量",value:"127",change:"+12",color:"var(--accent-blue)"},{label:"素材片段",value:"84",change:"+7",color:"var(--accent-green)"},{label:"AI 分析",value:"23",change:"本周",color:"var(--ai-glow)"},{label:"自查进度",value:"62%",change:"8项待检",color:"var(--accent-orange)"}].map((s,i)=>(
+      <div className="stats-row">{[{label:"文献总量",value:String(stats.papers),change:"数据库存储",color:"var(--accent-blue)"},{label:"素材片段",value:String(stats.clips||84),change:"持久化",color:"var(--accent-green)"},{label:"AI 对话",value:String(stats.chats),change:"已保存",color:"var(--ai-glow)"},{label:"自查进度",value:`${stats.checkPct}%`,change:`${stats.checkRemain}项待检`,color:"var(--accent-orange)"}].map((s,i)=>(
         <div key={i} className={`stat-card fade-in delay-${i+1}`}><div className="stat-label"><span style={{color:s.color}}>●</span>{s.label}</div><div className="stat-value" style={{color:s.color}}>{s.value}</div><div className="stat-change">{s.change}</div></div>
       ))}</div>
       <div className="section-header"><div className="section-title">功能模块</div></div>
@@ -608,16 +636,49 @@ function TopicPage({ config }) {
 
 function KnowledgePage({ config }) {
   const [grp, setGrp] = useState("全部");const [sel, setSel] = useState(null);const [sum, setSum] = useState("");const [sL, setSL] = useState(false);
-  const groups=[{name:"全部",count:6},{name:"核心文献",count:3},{name:"综述文献",count:1},{name:"高被引",count:1},{name:"拓展阅读",count:1}];
-  const filt=grp==="全部"?PAPERS:PAPERS.filter(p=>p.group===grp);
+  const [papers, setPapers] = useState(PAPERS);
+  const [newPaper, setNewPaper] = useState(false);
+  const [np, setNp] = useState({ title: "", authors: "", journal: "", year: 2024, tags: "", group: "核心文献" });
+
+  // Load papers from DB on mount
+  useEffect(() => { getPapers().then(d => { if (d) setPapers(d); else savePapers(PAPERS.map((p,i) => ({...p, id: i+1}))); }); }, []);
+
+  const handleAddPaper = async () => {
+    if (!np.title.trim()) return;
+    const paper = { ...np, tags: np.tags.split(",").map(t => t.trim()).filter(Boolean), cited: 0 };
+    const id = await addPaper(paper);
+    setPapers(prev => [...prev, { ...paper, id }]);
+    setNp({ title: "", authors: "", journal: "", year: 2024, tags: "", group: "核心文献" });
+    setNewPaper(false);
+  };
+
+  const handleDeletePaper = async (id) => {
+    await deletePaper(id);
+    setPapers(prev => prev.filter(p => p.id !== id));
+  };
+
+  const groupNames = [...new Set(papers.map(p => p.group))];
+  const groups = [{ name: "全部", count: papers.length }, ...groupNames.map(g => ({ name: g, count: papers.filter(p => p.group === g).length }))];
+  const filt=grp==="全部"?papers:papers.filter(p=>p.group===grp);
   const doSum=async(p)=>{setSel(p);setSum("");setSL(true);const r=await callAI(config,'你是材料科学资深研究员。简析论文:1)核心问题 2)方法创新 3)结论 4)对锌空气电池课题参考价值。中文≤150字。',`标题:${p.title}\n作者:${p.authors}\n期刊:${p.journal}(${p.year})`,500);setSL(false);setSum(r||"AI不可用");};
   return(
     <div className="kb-layout">
       <div className="kb-sidebar fade-in"><div style={{fontSize:10,fontWeight:700,color:'var(--text-muted)',marginBottom:8,textTransform:'uppercase',letterSpacing:1.5}}>文献分组</div>
         {groups.map(g=><div key={g.name} className={`group-item ${grp===g.name?'active':''}`} onClick={()=>setGrp(g.name)}><Icons.Folder/>{g.name}<span className="group-count">{g.count}</span></div>)}
+        <button className="btn btn-primary btn-sm" style={{marginTop:12,width:'100%'}} onClick={()=>setNewPaper(true)}><Icons.Plus/>添加文献</button>
       </div>
       <div className="fade-in delay-1" style={{display:'flex',flexDirection:'column',gap:8,overflow:'auto'}}>
-        {filt.map(p=><div key={p.id} className="paper-card"><div style={{display:'flex',alignItems:'flex-start',justifyContent:'space-between'}}><div style={{flex:1}}><div className="paper-title">{p.title}</div><div className="paper-meta"><span className="paper-journal">{p.journal}</span><span>{p.authors}</span><span>{p.year}</span><span style={{color:'var(--accent-amber)'}}>✦{p.cited}</span></div><div className="paper-tags">{p.tags.map(t=><span key={t} className="paper-tag">{t}</span>)}</div></div><button className="btn btn-ai btn-sm" onClick={()=>doSum(p)} style={{flexShrink:0,marginLeft:10}}><Icons.Sparkle/>AI分析</button></div>
+        {newPaper && (
+          <div className="paper-card" style={{border:'1px solid var(--accent-amber)'}}>
+            <div style={{display:'flex',flexDirection:'column',gap:8}}>
+              <input className="input-field" placeholder="论文标题..." value={np.title} onChange={e=>setNp(p=>({...p,title:e.target.value}))}/>
+              <div style={{display:'flex',gap:8}}><input className="input-field" placeholder="作者..." value={np.authors} onChange={e=>setNp(p=>({...p,authors:e.target.value}))}/><input className="input-field" placeholder="期刊..." value={np.journal} onChange={e=>setNp(p=>({...p,journal:e.target.value}))}/></div>
+              <div style={{display:'flex',gap:8}}><input className="input-field" type="number" placeholder="年份" value={np.year} onChange={e=>setNp(p=>({...p,year:parseInt(e.target.value)||2024}))}/><input className="input-field" placeholder="标签(逗号分隔)..." value={np.tags} onChange={e=>setNp(p=>({...p,tags:e.target.value}))}/><select className="input-field" value={np.group} onChange={e=>setNp(p=>({...p,group:e.target.value}))} style={{maxWidth:140}}><option>核心文献</option><option>综述文献</option><option>高被引</option><option>拓展阅读</option></select></div>
+              <div style={{display:'flex',gap:8}}><button className="btn btn-primary btn-sm" onClick={handleAddPaper}>保存</button><button className="btn btn-secondary btn-sm" onClick={()=>setNewPaper(false)}>取消</button></div>
+            </div>
+          </div>
+        )}
+        {filt.map(p=><div key={p.id} className="paper-card"><div style={{display:'flex',alignItems:'flex-start',justifyContent:'space-between'}}><div style={{flex:1}}><div className="paper-title">{p.title}</div><div className="paper-meta"><span className="paper-journal">{p.journal}</span><span>{p.authors}</span><span>{p.year}</span><span style={{color:'var(--accent-amber)'}}>✦{p.cited}</span></div><div className="paper-tags">{p.tags.map(t=><span key={t} className="paper-tag">{t}</span>)}</div></div><div style={{display:'flex',gap:6,flexShrink:0,marginLeft:10}}><button className="btn btn-ai btn-sm" onClick={()=>doSum(p)}><Icons.Sparkle/>AI分析</button><button className="btn btn-secondary btn-sm" onClick={()=>handleDeletePaper(p.id)} style={{color:'var(--accent-pink)'}}>删除</button></div></div>
           {sel?.id===p.id&&<div className="ai-summary-panel"><div className="ai-summary-header"><Icons.Sparkle/>AI文献分析</div>{sL?<TypingDots/>:<div className="ai-summary-text">{sum}</div>}</div>}
         </div>)}
       </div>
@@ -643,7 +704,12 @@ function ExperimentPage({ config }) {
 
 function WritingPage({ config }) {
   const [sec, setSec] = useState("intro");
-  const [text, setText] = useState("锌空气电池因其理论能量密度高、成本低廉、环境友好等优点，被认为是下一代可持续能源存储技术的有力候选方案。\n\n近年来，过渡金属氧化物成为替代贵金属催化剂的研究热点。\n\n尽管已有大量研究，但对其构效关系的理解仍不够深入。");
+  const defaultText = "锌空气电池因其理论能量密度高、成本低廉、环境友好等优点，被认为是下一代可持续能源存储技术的有力候选方案。\n\n近年来，过渡金属氧化物成为替代贵金属催化剂的研究热点。\n\n尽管已有大量研究，但对其构效关系的理解仍不够深入。";
+  const [text, setText] = useState(defaultText);
+
+  // Load and save drafts
+  useEffect(() => { getDrafts().then(d => { const found = d.find(x => x.id === sec); if (found) setText(found.content); }); }, [sec]);
+  const saveText = useCallback((val) => { setText(val); saveDraft({ id: sec, content: val, updatedAt: Date.now() }); }, [sec]);
   const [sug, setSug] = useState([]);const [aL, setAL] = useState(false);const [aq, setAq] = useState("");
   const outline=[{id:"abstract",label:"摘要"},{id:"intro",label:"1. 引言"},{id:"intro-bg",label:"1.1 背景",sub:true},{id:"methods",label:"2. 实验方法"},{id:"results",label:"3. 结果讨论"},{id:"conclusion",label:"4. 结论"}];
   const analyze=async()=>{setAL(true);setSug([]);const r=await callAIJSON(config,'学术写作教授。分析论文段落。返回JSON:{"suggestions":[{"type":"观点检查|逻辑分析|语言润色|引用建议","content":"...","priority":"high|medium|low"}]}。3-4条。',`引言:\n${text}`,800);setAL(false);if(r?.suggestions)setSug(r.suggestions);};
@@ -652,7 +718,7 @@ function WritingPage({ config }) {
   return(
     <div className="writing-layout">
       <div className="writing-outline fade-in"><div style={{fontSize:10,fontWeight:700,color:'var(--text-muted)',marginBottom:8,textTransform:'uppercase',letterSpacing:1.5}}>大纲</div>{outline.map(o=><div key={o.id} className={`outline-item ${o.sub?'outline-sub':''} ${sec===o.id?'active':''}`} onClick={()=>setSec(o.id)}>{!o.sub&&<Icons.ChevronRight/>}{o.label}</div>)}</div>
-      <div className="writing-editor fade-in delay-1"><div className="editor-toolbar">{["B","I","H2","引用"].map(b=><button key={b} className="tool-btn">{b}</button>)}<div style={{marginLeft:'auto'}}><button className="tool-btn ai-tool" onClick={analyze} disabled={aL}><Icons.Sparkle/>AI 分析</button></div></div><div style={{flex:1,padding:'20px',overflow:'auto'}}><h2 style={{fontFamily:'var(--font-serif)',fontSize:20,fontWeight:700,marginBottom:14}}>1. 引言</h2><textarea className="editor-textarea" value={text} onChange={e=>setText(e.target.value)} style={{minHeight:260}}/></div></div>
+      <div className="writing-editor fade-in delay-1"><div className="editor-toolbar">{["B","I","H2","引用"].map(b=><button key={b} className="tool-btn">{b}</button>)}<div style={{marginLeft:'auto'}}><button className="tool-btn ai-tool" onClick={analyze} disabled={aL}><Icons.Sparkle/>AI 分析</button></div></div><div style={{flex:1,padding:'20px',overflow:'auto'}}><h2 style={{fontFamily:'var(--font-serif)',fontSize:20,fontWeight:700,marginBottom:14}}>1. 引言</h2><textarea className="editor-textarea" value={text} onChange={e=>saveText(e.target.value)} style={{minHeight:260}}/></div></div>
       <div className="writing-ai-panel fade-in delay-2"><div className="ai-panel-header"><Icons.Sparkle/>AI 写作助手<AIBadge/></div><div className="ai-panel-body">
         {sug.length===0&&!aL&&<div style={{textAlign:'center',padding:'32px 16px',color:'var(--text-muted)',fontSize:13}}><div style={{fontSize:28,marginBottom:10,opacity:.4}}>✨</div>点击「AI 分析」获取建议</div>}
         {aL&&<div className="ai-suggestion"><div className="ai-suggestion-label"><Icons.Sparkle/>分析中...</div><TypingDots/></div>}
@@ -663,28 +729,71 @@ function WritingPage({ config }) {
 
 function ReadingPage(){return(<div className="panel fade-in"><div className="panel-header"><Icons.Book/>PDF 阅读器 & 素材截取</div><div className="panel-body"><div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:16}}><div style={{background:'var(--bg-deep)',borderRadius:'var(--radius-sm)',border:'1px solid var(--border)',padding:24,minHeight:260,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',gap:12}}><div style={{fontSize:48,opacity:.3}}>📄</div><div style={{color:'var(--text-muted)',fontSize:14,textAlign:'center'}}>拖入 PDF 开始阅读</div><button className="btn btn-secondary" style={{marginTop:6}}>选择文件</button></div><div><div style={{fontSize:13,fontWeight:600,marginBottom:10}}>素材库</div><div style={{display:'flex',flexDirection:'column',gap:6}}>{[{f:"前言素材",c:23,i:"📝"},{f:"实验方法",c:15,i:"🧪"},{f:"结果讨论",c:31,i:"📊"},{f:"图片素材",c:42,i:"🖼"}].map((x,i)=><div key={i} style={{padding:'11px 14px',background:'var(--bg-elevated)',border:'1px solid var(--border)',borderRadius:'var(--radius-sm)',display:'flex',alignItems:'center',gap:10}}><span style={{fontSize:16}}>{x.i}</span><span style={{fontSize:13,fontWeight:500,flex:1}}>{x.f}</span><span style={{fontSize:12,fontFamily:'var(--font-mono)',color:'var(--text-muted)'}}>{x.c}</span></div>)}</div></div></div></div></div>);}
 
-function ChecklistPage(){const[data,setData]=useState(CK_DATA);const toggle=(ci,ii)=>setData(p=>p.map((c,i)=>i===ci?{...c,items:c.items.map((it,j)=>j===ii?{...it,done:!it.done}:it)}:c));const td=data.reduce((s,c)=>s+c.items.filter(i=>i.done).length,0);const tt=data.reduce((s,c)=>s+c.items.length,0);const pct=Math.round(td/tt*100);
+function ChecklistPage(){const[data,setData]=useState(CK_DATA);
+  useEffect(()=>{getChecklist().then(d=>{if(d)setData(d);else saveChecklist(CK_DATA);});}, []);
+  const toggle=(ci,ii)=>{const nd=data.map((c,i)=>i===ci?{...c,items:c.items.map((it,j)=>j===ii?{...it,done:!it.done}:it)}:c);setData(nd);saveChecklist(nd);};
+  const td=data.reduce((s,c)=>s+c.items.filter(i=>i.done).length,0);const tt=data.reduce((s,c)=>s+c.items.length,0);const pct=Math.round(td/tt*100);
   return(<div><div className="panel fade-in" style={{marginBottom:18}}><div className="panel-body" style={{display:'flex',alignItems:'center',gap:18}}><div><div style={{fontSize:12,color:'var(--text-muted)',marginBottom:3}}>总体进度</div><div style={{fontSize:32,fontWeight:700,fontFamily:'var(--font-mono)',color:pct>=75?'var(--accent-green)':'var(--accent-orange)'}}>{pct}%</div></div><div style={{flex:1,height:8,background:'var(--bg-deep)',borderRadius:4,overflow:'hidden'}}><div style={{height:'100%',width:`${pct}%`,background:'linear-gradient(90deg,var(--accent-green),var(--accent-teal))',borderRadius:4,transition:'width .4s'}}/></div><div style={{fontSize:13,fontFamily:'var(--font-mono)',color:'var(--text-secondary)'}}>{td}/{tt}</div></div></div>
     <div className="checklist-grid">{data.map((cat,ci)=>{const d=cat.items.filter(i=>i.done).length;return(<div key={ci} className={`checklist-category fade-in delay-${ci+1}`}><div className="checklist-cat-header">{cat.category}<span className="checklist-progress">{d}/{cat.items.length}</span></div><div className="checklist-items">{cat.items.map((it,ii)=><div key={ii} className="checklist-item" onClick={()=>toggle(ci,ii)}><div className={`checkbox ${it.done?'checked':''}`}>{it.done&&<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round"><polyline points="20 6 9 17 4 12"/></svg>}</div><span className={`item-text ${it.done?'checked':''}`}>{it.text}</span></div>)}</div></div>);})}</div></div>);}
 
-function LabLogPage(){const entries=[{time:"2024-03-06 14:30",title:"Co₃O₄ 水热合成 #3",desc:"0.05M Co(NO₃)₂+0.1M尿素，120°C/12h",sample:"ZAB-20240306-03"},{time:"2024-03-06 10:15",title:"XRD 表征 #1&#2",desc:"10-80°，批次#2在36.8°峰强增强",sample:"ZAB-20240304-01"},{time:"2024-03-05 16:45",title:"LSV 电化学测试",desc:"三电极，过电位 #1=382mV, #2=341mV",sample:"ZAB-20240304-02"},{time:"2024-03-05 09:00",title:"⚠ 重复性排查",desc:"电极夹具接触不良→更换后恢复"}];
-  return(<div><div style={{display:'flex',gap:8,marginBottom:18}}><button className="btn btn-primary"><Icons.Plus/>新建记录</button><button className="btn btn-secondary">生成编号</button></div><div className="log-timeline">{entries.map((e,i)=><div key={i} className={`log-entry fade-in delay-${i+1}`}><div className="log-dot"/><div className="log-time">{e.time}</div><div className="log-title">{e.title}</div><div className="log-desc">{e.desc}</div>{e.sample&&<div className="log-sample">🏷{e.sample}</div>}</div>)}</div></div>);}
+function LabLogPage(){
+  const defaultEntries=[{id:1,time:"2024-03-06 14:30",title:"Co₃O₄ 水热合成 #3",desc:"0.05M Co(NO₃)₂+0.1M尿素，120°C/12h",sample:"ZAB-20240306-03"},{id:2,time:"2024-03-06 10:15",title:"XRD 表征 #1&#2",desc:"10-80°，批次#2在36.8°峰强增强",sample:"ZAB-20240304-01"},{id:3,time:"2024-03-05 16:45",title:"LSV 电化学测试",desc:"三电极，过电位 #1=382mV, #2=341mV",sample:"ZAB-20240304-02"},{id:4,time:"2024-03-05 09:00",title:"⚠ 重复性排查",desc:"电极夹具接触不良→更换后恢复",sample:""}];
+  const [entries, setEntries] = useState(defaultEntries);
+  const [showNew, setShowNew] = useState(false);
+  const [nl, setNl] = useState({ title: "", desc: "", sample: "" });
+
+  useEffect(()=>{getLogs().then(d=>{if(d)setEntries(d);else saveLogs(defaultEntries);});}, []);
+
+  const handleAdd = async () => {
+    if (!nl.title.trim()) return;
+    const entry = { ...nl, time: new Date().toLocaleString("zh-CN", { hour12: false }) };
+    const id = await addLog(entry);
+    setEntries(prev => [{ ...entry, id }, ...prev]);
+    setNl({ title: "", desc: "", sample: "" });
+    setShowNew(false);
+  };
+
+  const genSampleId = () => {
+    const d = new Date();
+    const ds = `${d.getFullYear()}${String(d.getMonth()+1).padStart(2,'0')}${String(d.getDate()).padStart(2,'0')}`;
+    const seq = String(entries.length + 1).padStart(2, '0');
+    return `ZAB-${ds}-${seq}`;
+  };
+
+  return(<div>
+    <div style={{display:'flex',gap:8,marginBottom:18}}><button className="btn btn-primary" onClick={()=>setShowNew(true)}><Icons.Plus/>新建记录</button><button className="btn btn-secondary" onClick={()=>setNl(p=>({...p,sample:genSampleId()}))}>生成编号</button></div>
+    {showNew && (
+      <div className="log-entry fade-in" style={{marginBottom:14,marginLeft:0,border:'1px solid var(--accent-teal)'}}>
+        <div style={{display:'flex',flexDirection:'column',gap:8}}>
+          <input className="input-field" placeholder="实验标题..." value={nl.title} onChange={e=>setNl(p=>({...p,title:e.target.value}))}/>
+          <textarea className="input-field" rows={2} placeholder="实验描述..." value={nl.desc} onChange={e=>setNl(p=>({...p,desc:e.target.value}))} style={{resize:'vertical'}}/>
+          <div style={{display:'flex',gap:8,alignItems:'center'}}><input className="input-field" placeholder="样品编号" value={nl.sample} onChange={e=>setNl(p=>({...p,sample:e.target.value}))}/><button className="btn btn-secondary btn-sm" onClick={()=>setNl(p=>({...p,sample:genSampleId()}))}>自动编号</button></div>
+          <div style={{display:'flex',gap:8}}><button className="btn btn-primary btn-sm" onClick={handleAdd}>保存</button><button className="btn btn-secondary btn-sm" onClick={()=>setShowNew(false)}>取消</button></div>
+        </div>
+      </div>
+    )}
+    <div className="log-timeline">{entries.map((e,i)=><div key={e.id||i} className={`log-entry fade-in delay-${Math.min(i+1,4)}`}><div className="log-dot"/><div className="log-time">{e.time}</div><div className="log-title">{e.title}</div><div className="log-desc">{e.desc}</div>{e.sample&&<div className="log-sample">🏷{e.sample}</div>}</div>)}</div>
+  </div>);}
 
 // ═══════════ AI CHAT ═══════════
 function AIChatDrawer({ config }) {
   const [open, setOpen] = useState(false);
-  const [msgs, setMsgs] = useState([{role:"assistant",content:"你好！我是 SciFlow AI 助手 🔬\n可以问我任何科研问题。"}]);
+  const defaultMsg = [{role:"assistant",content:"你好！我是 SciFlow AI 助手 🔬\n可以问我任何科研问题。"}];
+  const [msgs, setMsgs] = useState(defaultMsg);
   const [inp, setInp] = useState("");const [ld, setLd] = useState(false);const end=useRef(null);
+  useEffect(()=>{getChatHistory().then(d=>{if(d&&d.length>0)setMsgs(d.map(({role,content})=>({role,content})));});}, []);
   useEffect(()=>{end.current?.scrollIntoView({behavior:'smooth'});},[msgs]);
-  const send=async()=>{if(!inp.trim()||ld)return;const m=inp.trim();setInp("");setMsgs(p=>[...p,{role:"user",content:m}]);setLd(true);
-    const hist=[...msgs,{role:"user",content:m}].map(x=>({role:x.role==="assistant"?"assistant":"user",content:x.content}));
+  const send=async()=>{if(!inp.trim()||ld)return;const m=inp.trim();setInp("");
+    const userMsg={role:"user",content:m};setMsgs(p=>[...p,userMsg]);saveChatMessage(userMsg);setLd(true);
+    const hist=[...msgs,userMsg].map(x=>({role:x.role==="assistant"?"assistant":"user",content:x.content}));
     const r=await callAIChat(config,'你是SciFlow AI科研助手。专长：材料科学、电化学、论文写作。中文≤200字。',hist);
-    setMsgs(p=>[...p,{role:"assistant",content:r||"暂时无法回答。"}]);setLd(false);};
+    const aiMsg={role:"assistant",content:r||"暂时无法回答。"};setMsgs(p=>[...p,aiMsg]);saveChatMessage(aiMsg);setLd(false);};
+  const handleClear=async()=>{await clearChatHistory();setMsgs(defaultMsg);};
   const prov=AI_PROVIDERS[config.provider];
   if(!open)return<button className="ai-chat-fab" onClick={()=>setOpen(true)} title="AI 助手"><Icons.Bot/></button>;
   return(
     <div className="ai-chat-drawer">
-      <div className="chat-header"><div style={{color:'var(--ai-glow)'}}><Icons.Bot/></div><div className="chat-header-title">SciFlow AI</div><span style={{fontSize:12,color:'var(--text-muted)'}}>{prov?.icon}</span><AIBadge small/><button className="chat-header-close" onClick={()=>setOpen(false)}><Icons.Close/></button></div>
+      <div className="chat-header"><div style={{color:'var(--ai-glow)'}}><Icons.Bot/></div><div className="chat-header-title">SciFlow AI</div><span style={{fontSize:12,color:'var(--text-muted)'}}>{prov?.icon}</span><AIBadge small/><button className="chat-header-close" onClick={handleClear} title="清空聊天" style={{marginRight:4,fontSize:11,color:'var(--text-muted)'}}>清空</button><button className="chat-header-close" onClick={()=>setOpen(false)}><Icons.Close/></button></div>
       <div className="chat-messages">{msgs.map((m,i)=><div key={i} className={`chat-msg ${m.role}`}>{m.role==='assistant'&&<div className="ai-msg-label"><Icons.Sparkle/>AI</div>}<div style={{whiteSpace:'pre-wrap'}}>{m.content}</div></div>)}{ld&&<div className="chat-msg assistant"><div className="ai-msg-label"><Icons.Sparkle/>AI</div><TypingDots/></div>}<div ref={end}/></div>
       <div className="chat-input-row"><input className="chat-input" value={inp} onChange={e=>setInp(e.target.value)} placeholder="输入问题..." onKeyDown={e=>e.key==='Enter'&&send()}/><button className="chat-send" onClick={send} disabled={!inp.trim()||ld}><Icons.Send/></button></div>
     </div>);
@@ -694,7 +803,10 @@ function AIChatDrawer({ config }) {
 export default function SciFlowApp() {
   const [activeModule, setActiveModule] = useState("home");
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [config, setConfig] = useState(DEFAULT_CONFIG);
+  const [config, setConfig] = useState(() => loadConfig(DEFAULT_CONFIG));
+
+  // Persist AI config to localStorage whenever it changes
+  useEffect(() => { saveConfig(config); }, [config]);
 
   const mod = MODULES.find(m => m.id === activeModule);
   const title = activeModule === "home" ? "概览" : activeModule === "settings" ? "AI 配置" : mod?.label || "";
