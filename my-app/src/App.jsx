@@ -1,9 +1,12 @@
 import { useState, useEffect, useRef, useCallback, createContext, useContext } from "react";
-import { saveConfig, loadConfig, getPapers, savePapers, addPaper, deletePaper, getLogs, saveLogs, addLog, getChecklist, saveChecklist, getChatHistory, saveChatMessage, clearChatHistory, getSynonymGroups, saveSynonymGroup, deleteSynonymGroup, getClips, addClip, getDrafts, saveDraft } from "./db.js";
+import { saveConfig, loadConfig, getPapers, savePapers, addPaper, deletePaper, getLogs, saveLogs, addLog, getChecklist, saveChecklist, getChatHistory, saveChatMessage, clearChatHistory, getSynonymGroups, saveSynonymGroup, deleteSynonymGroup, getClips, addClip, deleteClip, getDrafts, saveDraft, getProjects, addProject, deleteProject, getProblemTree, saveProblemTree, addProblemNode, updateProblemNode, deleteProblemNode, exportDatabase, importDatabase, paperToBibTeX, papersToRIS, parseBibTeX, parseRIS } from "./db.js";
+import * as pdfjsLib from "pdfjs-dist";
+
+pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.mjs`;
 
 // ═══════════════════════════════════════════════════════════
 // SCIFLOW — AI-POWERED RESEARCH ASSISTANT
-// With Multi-Provider AI Configuration
+// With Multi-Provider AI Configuration & SQLite Database
 // ═══════════════════════════════════════════════════════════
 
 // ── AI Provider Definitions ──
@@ -614,9 +617,45 @@ function TopicPage({ config }) {
   const [kw, setKw] = useState("锌空气电池催化剂");
   const [aiKw, setAiKw] = useState(null);
   const [ld, setLd] = useState(false);
+  const [searchTerms, setSearchTerms] = useState([
+    {group: ['"zinc-air battery"', '"Zn-air battery"']},
+    {group: ['"catalyst"', '"electrocatalyst"']},
+    {group: ['"oxygen reduction"', '"oxygen evolution"']},
+  ]);
+  const [editFormula, setEditFormula] = useState(false);
+  const [formulaText, setFormulaText] = useState("");
   const defs = [{word:"zinc-air battery",type:"同义词"},{word:"Zn-air battery",type:"同义词"},{word:"metal-air battery",type:"近义词"},{word:"oxygen reduction reaction",type:"跨学科"},{word:"bifunctional catalyst",type:"相关表达"}];
   const expand = async()=>{if(!kw.trim())return;setLd(true);setAiKw(null);const r=await callAIJSON(config,'你是学术关键词扩展助手。返回纯JSON:{"keywords":[{"word":"...","type":"同义词|近义词|跨学科|相关表达","reason":"..."}]}。8-12个英文关键词。',`扩展:"${kw}"`);setLd(false);if(r?.keywords)setAiKw(r.keywords);};
   const kws=aiKw||defs;const cc=t=>t==="同义词"?"chip-synonym":t==="跨学科"?"chip-cross":t==="近义词"?"chip-related":"chip-ai";
+
+  const buildQuery = () => searchTerms.map(t => `(${t.group.join(" OR ")})`).join(" AND ");
+
+  const executeSearch = (db) => {
+    const query = buildQuery();
+    const urls = {
+      scopus: `https://www.scopus.com/results/results.uri?sort=plf-f&src=s&sot=a&sdt=a&s=${encodeURIComponent(query)}`,
+      wos: `https://www.webofscience.com/wos/alldb/basic-search`,
+      cnki: `https://kns.cnki.net/kns8s/search?classid=YSTT4HG0&kw=${encodeURIComponent(kw)}`,
+      googleScholar: `https://scholar.google.com/scholar?q=${encodeURIComponent(query)}`,
+      semanticScholar: `https://www.semanticscholar.org/search?q=${encodeURIComponent(query.replace(/"/g, ''))}`,
+    };
+    if (urls[db]) window.open(urls[db], '_blank');
+  };
+
+  const startEditFormula = () => {
+    setFormulaText(searchTerms.map(t => t.group.join(" OR ")).join("\nAND\n"));
+    setEditFormula(true);
+  };
+
+  const saveFormula = () => {
+    const lines = formulaText.split(/\nAND\n/i).filter(l => l.trim());
+    const newTerms = lines.map(line => ({
+      group: line.split(/\sOR\s/i).map(t => t.trim()).filter(Boolean)
+    }));
+    if (newTerms.length > 0) setSearchTerms(newTerms);
+    setEditFormula(false);
+  };
+
   return(
     <div className="topic-layout">
       <div><div className="panel fade-in"><div className="panel-header"><Icons.Search/>关键词扩展器<AIBadge/></div><div className="panel-body">
@@ -626,10 +665,34 @@ function TopicPage({ config }) {
         {aiKw&&<div className="ai-summary-panel" style={{marginTop:14}}><div className="ai-summary-header"><Icons.Sparkle/>AI 扩展完成</div><div className="ai-summary-text">已扩展 {aiKw.length} 个学术关键词。</div></div>}
       </div></div></div>
       <div><div className="panel fade-in delay-1"><div className="panel-header"><Icons.Globe/>检索式构建器</div><div className="panel-body">
-        <div className="search-formula">(<span className="formula-term">"zinc-air battery"</span> <span className="formula-op">OR</span> <span className="formula-term">"Zn-air battery"</span>)<br/><span className="formula-op">AND</span><br/>(<span className="formula-term">"catalyst"</span> <span className="formula-op">OR</span> <span className="formula-term">"electrocatalyst"</span>)<br/><span className="formula-op">AND</span><br/>(<span className="formula-term">"oxygen reduction"</span> <span className="formula-op">OR</span> <span className="formula-term">"oxygen evolution"</span>)</div>
-        <div style={{fontSize:12,color:'var(--text-muted)',marginBottom:10}}>预估检索结果：</div>
-        <div className="db-results"><div className="db-badge">Scopus <span className="db-count">2,847</span></div><div className="db-badge">WoS <span className="db-count">2,103</span></div><div className="db-badge">CNKI <span className="db-count">891</span></div></div>
-        <div style={{marginTop:14,display:'flex',gap:8}}><button className="btn btn-primary btn-sm">执行检索</button><button className="btn btn-secondary btn-sm">保存</button></div>
+        {editFormula ? (
+          <div>
+            <div style={{fontSize:12,color:'var(--text-muted)',marginBottom:6}}>每行一组关键词（用 OR 分隔），各组间用 AND 连接</div>
+            <textarea className="input-field" rows={6} value={formulaText} onChange={e=>setFormulaText(e.target.value)} style={{fontFamily:'var(--font-mono)',fontSize:12,resize:'vertical',marginBottom:10}}/>
+            <div style={{display:'flex',gap:8}}><button className="btn btn-primary btn-sm" onClick={saveFormula}>保存</button><button className="btn btn-secondary btn-sm" onClick={()=>setEditFormula(false)}>取消</button></div>
+          </div>
+        ) : (
+          <div>
+            <div className="search-formula" onClick={startEditFormula} style={{cursor:'pointer'}} title="点击编辑检索式">
+              {searchTerms.map((t,i)=>(
+                <span key={i}>{i>0&&<><br/><span className="formula-op">AND</span><br/></>}({t.group.map((g,j)=><span key={j}>{j>0&&<span className="formula-op"> OR </span>}<span className="formula-term">{g}</span></span>)})</span>
+              ))}
+            </div>
+            <div style={{fontSize:11,color:'var(--text-muted)',marginBottom:10,cursor:'pointer'}} onClick={startEditFormula}>点击检索式可编辑</div>
+          </div>
+        )}
+        <div style={{fontSize:12,color:'var(--text-muted)',marginBottom:10}}>选择数据库执行检索：</div>
+        <div className="db-results" style={{marginBottom:14}}>
+          <div className="db-badge" style={{cursor:'pointer'}} onClick={()=>executeSearch('scopus')}>Scopus</div>
+          <div className="db-badge" style={{cursor:'pointer'}} onClick={()=>executeSearch('wos')}>Web of Science</div>
+          <div className="db-badge" style={{cursor:'pointer'}} onClick={()=>executeSearch('cnki')}>CNKI</div>
+          <div className="db-badge" style={{cursor:'pointer'}} onClick={()=>executeSearch('googleScholar')}>Google Scholar</div>
+          <div className="db-badge" style={{cursor:'pointer'}} onClick={()=>executeSearch('semanticScholar')}>Semantic Scholar</div>
+        </div>
+        <div style={{display:'flex',gap:8}}>
+          <button className="btn btn-primary btn-sm" onClick={()=>executeSearch('googleScholar')}>执行检索</button>
+          <button className="btn btn-secondary btn-sm" onClick={startEditFormula}>编辑检索式</button>
+        </div>
       </div></div></div>
     </div>);
 }
@@ -639,6 +702,7 @@ function KnowledgePage({ config }) {
   const [papers, setPapers] = useState(PAPERS);
   const [newPaper, setNewPaper] = useState(false);
   const [np, setNp] = useState({ title: "", authors: "", journal: "", year: 2024, tags: "", group: "核心文献" });
+  const importFileRef = useRef(null);
 
   // Load papers from DB on mount
   useEffect(() => { getPapers().then(d => { if (d) setPapers(d); else savePapers(PAPERS.map((p,i) => ({...p, id: i+1}))); }); }, []);
@@ -657,6 +721,49 @@ function KnowledgePage({ config }) {
     setPapers(prev => prev.filter(p => p.id !== id));
   };
 
+  // BibTeX / RIS Export
+  const handleExportBibTeX = () => {
+    const data = papers.map(p => paperToBibTeX(p)).join("\n\n");
+    const blob = new Blob([data], { type: "text/plain" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = "sciflow_papers.bib"; a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const handleExportRIS = () => {
+    const data = papersToRIS(papers);
+    const blob = new Blob([data], { type: "text/plain" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = "sciflow_papers.ris"; a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  // BibTeX / RIS Import
+  const handleImportFile = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const text = await file.text();
+    let imported = [];
+    if (file.name.endsWith('.bib')) {
+      imported = parseBibTeX(text);
+    } else if (file.name.endsWith('.ris')) {
+      imported = parseRIS(text);
+    } else {
+      // Try BibTeX first, then RIS
+      imported = parseBibTeX(text);
+      if (imported.length === 0) imported = parseRIS(text);
+    }
+    if (imported.length > 0) {
+      for (const p of imported) {
+        const id = await addPaper(p);
+        setPapers(prev => [...prev, { ...p, id }]);
+      }
+    }
+    e.target.value = "";
+  };
+
   const groupNames = [...new Set(papers.map(p => p.group))];
   const groups = [{ name: "全部", count: papers.length }, ...groupNames.map(g => ({ name: g, count: papers.filter(p => p.group === g).length }))];
   const filt=grp==="全部"?papers:papers.filter(p=>p.group===grp);
@@ -666,6 +773,14 @@ function KnowledgePage({ config }) {
       <div className="kb-sidebar fade-in"><div style={{fontSize:10,fontWeight:700,color:'var(--text-muted)',marginBottom:8,textTransform:'uppercase',letterSpacing:1.5}}>文献分组</div>
         {groups.map(g=><div key={g.name} className={`group-item ${grp===g.name?'active':''}`} onClick={()=>setGrp(g.name)}><Icons.Folder/>{g.name}<span className="group-count">{g.count}</span></div>)}
         <button className="btn btn-primary btn-sm" style={{marginTop:12,width:'100%'}} onClick={()=>setNewPaper(true)}><Icons.Plus/>添加文献</button>
+        <div style={{marginTop:12,display:'flex',flexDirection:'column',gap:4}}>
+          <div style={{fontSize:10,fontWeight:700,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:1,marginBottom:4}}>导入 / 导出</div>
+          <button className="btn btn-secondary btn-sm" style={{width:'100%',fontSize:11}} onClick={()=>importFileRef.current?.click()}>导入 BibTeX/RIS</button>
+          <input ref={importFileRef} type="file" accept=".bib,.ris,.txt" onChange={handleImportFile} style={{display:'none'}}/>
+          <button className="btn btn-secondary btn-sm" style={{width:'100%',fontSize:11}} onClick={handleExportBibTeX}>导出 BibTeX (.bib)</button>
+          <button className="btn btn-secondary btn-sm" style={{width:'100%',fontSize:11}} onClick={handleExportRIS}>导出 RIS (.ris)</button>
+          <div style={{fontSize:10,color:'var(--text-muted)',lineHeight:1.4,marginTop:4}}>兼容 EndNote, Zotero, Mendeley</div>
+        </div>
       </div>
       <div className="fade-in delay-1" style={{display:'flex',flexDirection:'column',gap:8,overflow:'auto'}}>
         {newPaper && (
@@ -673,12 +788,12 @@ function KnowledgePage({ config }) {
             <div style={{display:'flex',flexDirection:'column',gap:8}}>
               <input className="input-field" placeholder="论文标题..." value={np.title} onChange={e=>setNp(p=>({...p,title:e.target.value}))}/>
               <div style={{display:'flex',gap:8}}><input className="input-field" placeholder="作者..." value={np.authors} onChange={e=>setNp(p=>({...p,authors:e.target.value}))}/><input className="input-field" placeholder="期刊..." value={np.journal} onChange={e=>setNp(p=>({...p,journal:e.target.value}))}/></div>
-              <div style={{display:'flex',gap:8}}><input className="input-field" type="number" placeholder="年份" value={np.year} onChange={e=>setNp(p=>({...p,year:parseInt(e.target.value)||2024}))}/><input className="input-field" placeholder="标签(逗号分隔)..." value={np.tags} onChange={e=>setNp(p=>({...p,tags:e.target.value}))}/><select className="input-field" value={np.group} onChange={e=>setNp(p=>({...p,group:e.target.value}))} style={{maxWidth:140}}><option>核心文献</option><option>综述文献</option><option>高被引</option><option>拓展阅读</option></select></div>
+              <div style={{display:'flex',gap:8}}><input className="input-field" type="number" placeholder="年份" value={np.year} onChange={e=>setNp(p=>({...p,year:parseInt(e.target.value)||2024}))}/><input className="input-field" placeholder="标签(逗号分隔)..." value={np.tags} onChange={e=>setNp(p=>({...p,tags:e.target.value}))}/><select className="input-field" value={np.group} onChange={e=>setNp(p=>({...p,group:e.target.value}))} style={{maxWidth:140}}><option>核心文献</option><option>综述文献</option><option>高被引</option><option>拓展阅读</option><option>imported</option></select></div>
               <div style={{display:'flex',gap:8}}><button className="btn btn-primary btn-sm" onClick={handleAddPaper}>保存</button><button className="btn btn-secondary btn-sm" onClick={()=>setNewPaper(false)}>取消</button></div>
             </div>
           </div>
         )}
-        {filt.map(p=><div key={p.id} className="paper-card"><div style={{display:'flex',alignItems:'flex-start',justifyContent:'space-between'}}><div style={{flex:1}}><div className="paper-title">{p.title}</div><div className="paper-meta"><span className="paper-journal">{p.journal}</span><span>{p.authors}</span><span>{p.year}</span><span style={{color:'var(--accent-amber)'}}>✦{p.cited}</span></div><div className="paper-tags">{p.tags.map(t=><span key={t} className="paper-tag">{t}</span>)}</div></div><div style={{display:'flex',gap:6,flexShrink:0,marginLeft:10}}><button className="btn btn-ai btn-sm" onClick={()=>doSum(p)}><Icons.Sparkle/>AI分析</button><button className="btn btn-secondary btn-sm" onClick={()=>handleDeletePaper(p.id)} style={{color:'var(--accent-pink)'}}>删除</button></div></div>
+        {filt.map(p=><div key={p.id} className="paper-card"><div style={{display:'flex',alignItems:'flex-start',justifyContent:'space-between'}}><div style={{flex:1}}><div className="paper-title">{p.title}</div><div className="paper-meta"><span className="paper-journal">{p.journal}</span><span>{p.authors}</span><span>{p.year}</span><span style={{color:'var(--accent-amber)'}}>✦{p.cited}</span></div><div className="paper-tags">{(Array.isArray(p.tags)?p.tags:[]).map(t=><span key={t} className="paper-tag">{t}</span>)}</div></div><div style={{display:'flex',gap:6,flexShrink:0,marginLeft:10}}><button className="btn btn-ai btn-sm" onClick={()=>doSum(p)}><Icons.Sparkle/>AI分析</button><button className="btn btn-secondary btn-sm" onClick={()=>handleDeletePaper(p.id)} style={{color:'var(--accent-pink)'}}>删除</button></div></div>
           {sel?.id===p.id&&<div className="ai-summary-panel"><div className="ai-summary-header"><Icons.Sparkle/>AI文献分析</div>{sL?<TypingDots/>:<div className="ai-summary-text">{sum}</div>}</div>}
         </div>)}
       </div>
@@ -688,7 +803,53 @@ function KnowledgePage({ config }) {
 function ExperimentPage({ config }) {
   const [di, setDi] = useState("");const [dr, setDr] = useState("");const [dL, setDL] = useState(false);
   const diag=async()=>{if(!di.trim())return;setDL(true);setDr("");const r=await callAI(config,'你是材料科学实验导师。分析实验异常:1)2-3个原因 2)排查路径 3)解决建议。中文≤200字。',di,600);setDL(false);setDr(r||"AI不可用");};
-  const nodes=[{level:1,label:"研究意义",text:"开发高效低成本锌空气电池催化剂",color:"var(--accent-amber)"},{level:1,label:"关键问题",text:"如何提升 Co₃O₄ 的 OER/ORR 双功能性能？",color:"var(--accent-amber)"},{level:2,label:"子问题 1",text:"形貌调控对催化活性的影响",refs:"Zhang 2024",color:"var(--accent-blue)"},{level:2,label:"子问题 2",text:"N 掺杂优化电子结构",refs:"Chen 2023",color:"var(--accent-blue)"},{level:3,label:"实验变量",text:"合成温度、前驱体浓度、N源",color:"var(--accent-green)"},{level:3,label:"表征",text:"XRD, SEM, TEM, XPS",color:"var(--accent-green)"}];
+
+  const defaultNodes=[{level:1,label:"研究意义",text:"开发高效低成本锌空气电池催化剂",color:"var(--accent-amber)"},{level:1,label:"关键问题",text:"如何提升 Co₃O₄ 的 OER/ORR 双功能性能？",color:"var(--accent-amber)"},{level:2,label:"子问题 1",text:"形貌调控对催化活性的影响",refs:"Zhang 2024",color:"var(--accent-blue)"},{level:2,label:"子问题 2",text:"N 掺杂优化电子结构",refs:"Chen 2023",color:"var(--accent-blue)"},{level:3,label:"实验变量",text:"合成温度、前驱体浓度、N源",color:"var(--accent-green)"},{level:3,label:"表征",text:"XRD, SEM, TEM, XPS",color:"var(--accent-green)"}];
+  const [nodes, setNodes] = useState(defaultNodes);
+  const [editIdx, setEditIdx] = useState(null);
+  const [editNode, setEditNode] = useState(null);
+  const [showAdd, setShowAdd] = useState(false);
+  const [newNode, setNewNode] = useState({level:1,label:"",text:"",refs:"",color:"var(--accent-amber)"});
+  const levelColors = {"1":"var(--accent-amber)","2":"var(--accent-blue)","3":"var(--accent-green)"};
+
+  useEffect(()=>{getProblemTree().then(d=>{if(d&&d.length>0)setNodes(d);else saveProblemTree(defaultNodes);});}, []);
+
+  const handleSaveEdit = () => {
+    if (!editNode || editIdx === null) return;
+    const updated = [...nodes];
+    updated[editIdx] = { ...editNode, color: levelColors[String(editNode.level)] || "var(--accent-amber)" };
+    setNodes(updated);
+    saveProblemTree(updated);
+    setEditIdx(null);
+    setEditNode(null);
+  };
+
+  const handleAdd = () => {
+    if (!newNode.label.trim() || !newNode.text.trim()) return;
+    const node = { ...newNode, color: levelColors[String(newNode.level)] || "var(--accent-amber)" };
+    const updated = [...nodes, node];
+    setNodes(updated);
+    saveProblemTree(updated);
+    setNewNode({level:1,label:"",text:"",refs:"",color:"var(--accent-amber)"});
+    setShowAdd(false);
+  };
+
+  const handleDelete = (idx) => {
+    const updated = nodes.filter((_,i) => i !== idx);
+    setNodes(updated);
+    saveProblemTree(updated);
+    if (editIdx === idx) { setEditIdx(null); setEditNode(null); }
+  };
+
+  const moveNode = (idx, dir) => {
+    const newIdx = idx + dir;
+    if (newIdx < 0 || newIdx >= nodes.length) return;
+    const updated = [...nodes];
+    [updated[idx], updated[newIdx]] = [updated[newIdx], updated[idx]];
+    setNodes(updated);
+    saveProblemTree(updated);
+  };
+
   return(
     <div>
       <div className="panel fade-in" style={{marginBottom:16}}><div className="panel-header"><Icons.Wand/>AI 问题诊断器<AIBadge/></div><div className="panel-body">
@@ -697,37 +858,329 @@ function ExperimentPage({ config }) {
         {dL&&<div style={{marginTop:10}}><TypingDots/></div>}
         {dr&&!dL&&<div className="ai-summary-panel" style={{marginTop:10}}><div className="ai-summary-header"><Icons.Sparkle/>诊断结果</div><div className="ai-summary-text">{dr}</div></div>}
       </div></div>
-      <div className="section-header"><div className="section-title">问题分解树</div></div>
-      <div style={{display:'flex',flexDirection:'column',gap:10}}>{nodes.map((n,i)=><div key={i} className={`tree-node tree-level-${n.level} fade-in delay-${(i%4)+1}`}><div className="tree-node-label" style={{color:n.color}}>{n.label}</div><div className="tree-node-text">{n.text}</div>{n.refs&&<div className="tree-node-refs"><Icons.Book/>关联:{n.refs}</div>}</div>)}</div>
+      <div className="section-header"><div className="section-title">问题分解树</div><button className="btn btn-primary btn-sm" onClick={()=>setShowAdd(true)}><Icons.Plus/>添加节点</button></div>
+      {showAdd && (
+        <div className="tree-node fade-in" style={{marginBottom:10,border:'1px solid var(--accent-amber)'}}>
+          <div style={{display:'flex',flexDirection:'column',gap:8}}>
+            <div style={{display:'flex',gap:8}}>
+              <select className="input-field" value={newNode.level} onChange={e=>setNewNode(p=>({...p,level:parseInt(e.target.value)}))} style={{maxWidth:120}}>
+                <option value={1}>层级1 (主题)</option><option value={2}>层级2 (子问题)</option><option value={3}>层级3 (细节)</option>
+              </select>
+              <input className="input-field" placeholder="标签 (如: 子问题 3)" value={newNode.label} onChange={e=>setNewNode(p=>({...p,label:e.target.value}))}/>
+            </div>
+            <input className="input-field" placeholder="内容描述..." value={newNode.text} onChange={e=>setNewNode(p=>({...p,text:e.target.value}))}/>
+            <input className="input-field" placeholder="关联文献 (可选)" value={newNode.refs} onChange={e=>setNewNode(p=>({...p,refs:e.target.value}))}/>
+            <div style={{display:'flex',gap:8}}><button className="btn btn-primary btn-sm" onClick={handleAdd}>添加</button><button className="btn btn-secondary btn-sm" onClick={()=>setShowAdd(false)}>取消</button></div>
+          </div>
+        </div>
+      )}
+      <div style={{display:'flex',flexDirection:'column',gap:10}}>
+        {nodes.map((n,i)=>(
+          editIdx === i ? (
+            <div key={i} className="tree-node fade-in" style={{border:'1px solid var(--ai-glow)'}}>
+              <div style={{display:'flex',flexDirection:'column',gap:8}}>
+                <div style={{display:'flex',gap:8}}>
+                  <select className="input-field" value={editNode.level} onChange={e=>setEditNode(p=>({...p,level:parseInt(e.target.value)}))} style={{maxWidth:120}}>
+                    <option value={1}>层级1</option><option value={2}>层级2</option><option value={3}>层级3</option>
+                  </select>
+                  <input className="input-field" value={editNode.label} onChange={e=>setEditNode(p=>({...p,label:e.target.value}))}/>
+                </div>
+                <input className="input-field" value={editNode.text} onChange={e=>setEditNode(p=>({...p,text:e.target.value}))}/>
+                <input className="input-field" placeholder="关联文献" value={editNode.refs||""} onChange={e=>setEditNode(p=>({...p,refs:e.target.value}))}/>
+                <div style={{display:'flex',gap:8}}><button className="btn btn-primary btn-sm" onClick={handleSaveEdit}>保存</button><button className="btn btn-secondary btn-sm" onClick={()=>{setEditIdx(null);setEditNode(null);}}>取消</button></div>
+              </div>
+            </div>
+          ) : (
+            <div key={i} className={`tree-node tree-level-${n.level} fade-in delay-${(i%4)+1}`} style={{position:'relative'}}>
+              <div className="tree-node-label" style={{color:n.color}}>{n.label}</div>
+              <div className="tree-node-text">{n.text}</div>
+              {n.refs&&<div className="tree-node-refs"><Icons.Book/>关联:{n.refs}</div>}
+              <div style={{position:'absolute',top:10,right:10,display:'flex',gap:4}}>
+                <button className="btn btn-secondary btn-sm" onClick={()=>moveNode(i,-1)} style={{padding:'2px 6px',fontSize:11}} title="上移">↑</button>
+                <button className="btn btn-secondary btn-sm" onClick={()=>moveNode(i,1)} style={{padding:'2px 6px',fontSize:11}} title="下移">↓</button>
+                <button className="btn btn-secondary btn-sm" onClick={()=>{setEditIdx(i);setEditNode({...n});}} style={{padding:'2px 6px',fontSize:11}}>编辑</button>
+                <button className="btn btn-secondary btn-sm" onClick={()=>handleDelete(i)} style={{padding:'2px 6px',fontSize:11,color:'var(--accent-pink)'}}>删除</button>
+              </div>
+            </div>
+          )
+        ))}
+      </div>
     </div>);
 }
 
 function WritingPage({ config }) {
   const [sec, setSec] = useState("intro");
-  const defaultText = "锌空气电池因其理论能量密度高、成本低廉、环境友好等优点，被认为是下一代可持续能源存储技术的有力候选方案。\n\n近年来，过渡金属氧化物成为替代贵金属催化剂的研究热点。\n\n尽管已有大量研究，但对其构效关系的理解仍不够深入。";
-  const [text, setText] = useState(defaultText);
+  const defaultTexts = {
+    abstract: "摘要内容...",
+    intro: "锌空气电池因其理论能量密度高、成本低廉、环境友好等优点，被认为是下一代可持续能源存储技术的有力候选方案。\n\n近年来，过渡金属氧化物成为替代贵金属催化剂的研究热点。\n\n尽管已有大量研究，但对其构效关系的理解仍不够深入。",
+    "intro-bg": "背景内容...",
+    methods: "实验方法内容...",
+    results: "结果讨论内容...",
+    conclusion: "结论内容...",
+  };
+  const [text, setText] = useState(defaultTexts.intro);
+  const editorRef = useRef(null);
 
-  // Load and save drafts
-  useEffect(() => { getDrafts().then(d => { const found = d.find(x => x.id === sec); if (found) setText(found.content); }); }, [sec]);
+  useEffect(() => { getDrafts().then(d => { const found = d.find(x => x.id === sec); if (found) setText(found.content); else setText(defaultTexts[sec] || ""); }); }, [sec]);
   const saveText = useCallback((val) => { setText(val); saveDraft({ id: sec, content: val, updatedAt: Date.now() }); }, [sec]);
   const [sug, setSug] = useState([]);const [aL, setAL] = useState(false);const [aq, setAq] = useState("");
-  const outline=[{id:"abstract",label:"摘要"},{id:"intro",label:"1. 引言"},{id:"intro-bg",label:"1.1 背景",sub:true},{id:"methods",label:"2. 实验方法"},{id:"results",label:"3. 结果讨论"},{id:"conclusion",label:"4. 结论"}];
-  const analyze=async()=>{setAL(true);setSug([]);const r=await callAIJSON(config,'学术写作教授。分析论文段落。返回JSON:{"suggestions":[{"type":"观点检查|逻辑分析|语言润色|引用建议","content":"...","priority":"high|medium|low"}]}。3-4条。',`引言:\n${text}`,800);setAL(false);if(r?.suggestions)setSug(r.suggestions);};
+
+  const [outline, setOutline] = useState([
+    {id:"abstract",label:"摘要"},{id:"intro",label:"1. 引言"},{id:"intro-bg",label:"1.1 背景",sub:true},
+    {id:"methods",label:"2. 实验方法"},{id:"results",label:"3. 结果讨论"},{id:"conclusion",label:"4. 结论"}
+  ]);
+  const [addingSection, setAddingSection] = useState(false);
+  const [newSecLabel, setNewSecLabel] = useState("");
+
+  const sectionLabels = {abstract:"摘要",intro:"1. 引言","intro-bg":"1.1 背景",methods:"2. 实验方法",results:"3. 结果讨论",conclusion:"4. 结论"};
+  const currentLabel = outline.find(o=>o.id===sec)?.label || sec;
+
+  const applyFormat = (fmt) => {
+    const ta = editorRef.current;
+    if (!ta) return;
+    const start = ta.selectionStart;
+    const end = ta.selectionEnd;
+    const selected = text.substring(start, end);
+    let newText;
+    if (fmt === "B") {
+      newText = text.substring(0, start) + `**${selected || "粗体文本"}**` + text.substring(end);
+    } else if (fmt === "I") {
+      newText = text.substring(0, start) + `*${selected || "斜体文本"}*` + text.substring(end);
+    } else if (fmt === "H2") {
+      const lineStart = text.lastIndexOf("\n", start - 1) + 1;
+      newText = text.substring(0, lineStart) + "## " + text.substring(lineStart);
+    } else if (fmt === "引用") {
+      const lineStart = text.lastIndexOf("\n", start - 1) + 1;
+      newText = text.substring(0, lineStart) + "> " + text.substring(lineStart);
+    }
+    if (newText) saveText(newText);
+  };
+
+  const handleAddSection = () => {
+    if (!newSecLabel.trim()) return;
+    const id = "sec_" + Date.now();
+    setOutline(prev => [...prev, { id, label: newSecLabel.trim() }]);
+    setNewSecLabel("");
+    setAddingSection(false);
+  };
+
+  const handleDeleteSection = (id) => {
+    if (outline.length <= 1) return;
+    setOutline(prev => prev.filter(o => o.id !== id));
+    if (sec === id) setSec(outline[0].id);
+  };
+
+  const analyze=async()=>{setAL(true);setSug([]);const r=await callAIJSON(config,'学术写作教授。分析论文段落。返回JSON:{"suggestions":[{"type":"观点检查|逻辑分析|语言润色|引用建议","content":"...","priority":"high|medium|low"}]}。3-4条。',`${currentLabel}:\n${text}`,800);setAL(false);if(r?.suggestions)setSug(r.suggestions);};
+
+  const aiPolish=async()=>{setAL(true);const r=await callAI(config,'学术写作助手。润色以下学术论文段落，改善语言表达和逻辑连贯性，保持学术风格。直接返回润色后的文本。',text,2000);setAL(false);if(r){setSug(p=>[...p,{type:"AI 润色结果",content:r,priority:"high"}]);}};
+
   const ask=async()=>{if(!aq.trim())return;const q=aq;setAq("");setAL(true);const r=await callAI(config,'锌空气电池论文写作助手。中文≤150字。',`段落:\n${text}\n\n问题:${q}`,500);setAL(false);if(r)setSug(p=>[...p,{type:"AI 回答",content:r,priority:"high"}]);};
   const pc={high:'var(--accent-orange)',medium:'var(--accent-amber)',low:'var(--accent-blue)'};
+
+  const applySuggestion = (content) => {
+    saveText(content);
+  };
+
   return(
     <div className="writing-layout">
-      <div className="writing-outline fade-in"><div style={{fontSize:10,fontWeight:700,color:'var(--text-muted)',marginBottom:8,textTransform:'uppercase',letterSpacing:1.5}}>大纲</div>{outline.map(o=><div key={o.id} className={`outline-item ${o.sub?'outline-sub':''} ${sec===o.id?'active':''}`} onClick={()=>setSec(o.id)}>{!o.sub&&<Icons.ChevronRight/>}{o.label}</div>)}</div>
-      <div className="writing-editor fade-in delay-1"><div className="editor-toolbar">{["B","I","H2","引用"].map(b=><button key={b} className="tool-btn">{b}</button>)}<div style={{marginLeft:'auto'}}><button className="tool-btn ai-tool" onClick={analyze} disabled={aL}><Icons.Sparkle/>AI 分析</button></div></div><div style={{flex:1,padding:'20px',overflow:'auto'}}><h2 style={{fontFamily:'var(--font-serif)',fontSize:20,fontWeight:700,marginBottom:14}}>1. 引言</h2><textarea className="editor-textarea" value={text} onChange={e=>saveText(e.target.value)} style={{minHeight:260}}/></div></div>
+      <div className="writing-outline fade-in">
+        <div style={{fontSize:10,fontWeight:700,color:'var(--text-muted)',marginBottom:8,textTransform:'uppercase',letterSpacing:1.5}}>大纲</div>
+        {outline.map(o=>(
+          <div key={o.id} className={`outline-item ${o.sub?'outline-sub':''} ${sec===o.id?'active':''}`} style={{position:'relative',paddingRight:24}}>
+            <span onClick={()=>setSec(o.id)} style={{flex:1,cursor:'pointer',display:'flex',alignItems:'center',gap:5}}>{!o.sub&&<Icons.ChevronRight/>}{o.label}</span>
+            {!["abstract","intro","methods","results","conclusion"].includes(o.id) && (
+              <span onClick={()=>handleDeleteSection(o.id)} style={{position:'absolute',right:6,top:'50%',transform:'translateY(-50%)',cursor:'pointer',fontSize:11,color:'var(--text-muted)',opacity:0.5}} title="删除章节">×</span>
+            )}
+          </div>
+        ))}
+        {addingSection ? (
+          <div style={{padding:6,display:'flex',flexDirection:'column',gap:4}}>
+            <input className="input-field" placeholder="章节标题..." value={newSecLabel} onChange={e=>setNewSecLabel(e.target.value)} onKeyDown={e=>e.key==='Enter'&&handleAddSection()} style={{fontSize:12,padding:6}}/>
+            <div style={{display:'flex',gap:4}}><button className="btn btn-primary btn-sm" style={{fontSize:10,padding:'3px 8px'}} onClick={handleAddSection}>添加</button><button className="btn btn-secondary btn-sm" style={{fontSize:10,padding:'3px 8px'}} onClick={()=>setAddingSection(false)}>取消</button></div>
+          </div>
+        ) : (
+          <div className="outline-item" onClick={()=>setAddingSection(true)} style={{color:'var(--accent-amber)',fontSize:12,cursor:'pointer'}}><Icons.Plus/>添加章节</div>
+        )}
+      </div>
+      <div className="writing-editor fade-in delay-1">
+        <div className="editor-toolbar">
+          {["B","I","H2","引用"].map(b=><button key={b} className="tool-btn" onClick={()=>applyFormat(b)} title={b==="B"?"粗体":b==="I"?"斜体":b==="H2"?"二级标题":"引用"}>{b}</button>)}
+          <div style={{marginLeft:'auto',display:'flex',gap:4}}>
+            <button className="tool-btn ai-tool" onClick={aiPolish} disabled={aL}><Icons.Sparkle/>AI 润色</button>
+            <button className="tool-btn ai-tool" onClick={analyze} disabled={aL}><Icons.Sparkle/>AI 分析</button>
+          </div>
+        </div>
+        <div style={{flex:1,padding:'20px',overflow:'auto'}}>
+          <h2 style={{fontFamily:'var(--font-serif)',fontSize:20,fontWeight:700,marginBottom:14}}>{currentLabel}</h2>
+          <textarea ref={editorRef} className="editor-textarea" value={text} onChange={e=>saveText(e.target.value)} style={{minHeight:260}} placeholder="在此输入内容..."/>
+        </div>
+      </div>
       <div className="writing-ai-panel fade-in delay-2"><div className="ai-panel-header"><Icons.Sparkle/>AI 写作助手<AIBadge/></div><div className="ai-panel-body">
-        {sug.length===0&&!aL&&<div style={{textAlign:'center',padding:'32px 16px',color:'var(--text-muted)',fontSize:13}}><div style={{fontSize:28,marginBottom:10,opacity:.4}}>✨</div>点击「AI 分析」获取建议</div>}
+        {sug.length===0&&!aL&&<div style={{textAlign:'center',padding:'32px 16px',color:'var(--text-muted)',fontSize:13}}><div style={{fontSize:28,marginBottom:10,opacity:.4}}>✨</div>点击「AI 分析」或「AI 润色」获取建议</div>}
         {aL&&<div className="ai-suggestion"><div className="ai-suggestion-label"><Icons.Sparkle/>分析中...</div><TypingDots/></div>}
-        {sug.map((s,i)=><div key={i} className="ai-suggestion"><div className="ai-suggestion-label"><span style={{width:6,height:6,borderRadius:'50%',background:pc[s.priority]||'var(--ai-glow)'}}/>{s.type}</div><div style={{whiteSpace:'pre-wrap'}}>{s.content}</div></div>)}
+        {sug.map((s,i)=><div key={i} className="ai-suggestion">
+          <div className="ai-suggestion-label"><span style={{width:6,height:6,borderRadius:'50%',background:pc[s.priority]||'var(--ai-glow)'}}/>{s.type}</div>
+          <div style={{whiteSpace:'pre-wrap'}}>{s.content}</div>
+          {s.type==="AI 润色结果"&&<button className="btn btn-ai btn-sm" style={{marginTop:8,fontSize:11}} onClick={()=>applySuggestion(s.content)}>应用到编辑器</button>}
+        </div>)}
       </div><div className="ai-panel-input"><input value={aq} onChange={e=>setAq(e.target.value)} placeholder="问AI..." onKeyDown={e=>e.key==='Enter'&&ask()}/><button className="btn btn-ai btn-sm" onClick={ask} disabled={!aq.trim()||aL}><Icons.Send/></button></div></div>
     </div>);
 }
 
-function ReadingPage(){return(<div className="panel fade-in"><div className="panel-header"><Icons.Book/>PDF 阅读器 & 素材截取</div><div className="panel-body"><div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:16}}><div style={{background:'var(--bg-deep)',borderRadius:'var(--radius-sm)',border:'1px solid var(--border)',padding:24,minHeight:260,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',gap:12}}><div style={{fontSize:48,opacity:.3}}>📄</div><div style={{color:'var(--text-muted)',fontSize:14,textAlign:'center'}}>拖入 PDF 开始阅读</div><button className="btn btn-secondary" style={{marginTop:6}}>选择文件</button></div><div><div style={{fontSize:13,fontWeight:600,marginBottom:10}}>素材库</div><div style={{display:'flex',flexDirection:'column',gap:6}}>{[{f:"前言素材",c:23,i:"📝"},{f:"实验方法",c:15,i:"🧪"},{f:"结果讨论",c:31,i:"📊"},{f:"图片素材",c:42,i:"🖼"}].map((x,i)=><div key={i} style={{padding:'11px 14px',background:'var(--bg-elevated)',border:'1px solid var(--border)',borderRadius:'var(--radius-sm)',display:'flex',alignItems:'center',gap:10}}><span style={{fontSize:16}}>{x.i}</span><span style={{fontSize:13,fontWeight:500,flex:1}}>{x.f}</span><span style={{fontSize:12,fontFamily:'var(--font-mono)',color:'var(--text-muted)'}}>{x.c}</span></div>)}</div></div></div></div></div>);}
+function ReadingPage() {
+  const [pdfText, setPdfText] = useState([]);
+  const [pdfName, setPdfName] = useState("");
+  const [currentPage, setCurrentPage] = useState(0);
+  const [loading, setLoading] = useState(false);
+  const [clips, setClips] = useState([]);
+  const [selectedText, setSelectedText] = useState("");
+  const [clipFolder, setClipFolder] = useState("前言素材");
+  const fileInputRef = useRef(null);
+  const folders = ["前言素材", "实验方法", "结果讨论", "图片素材", "其他"];
+
+  useEffect(() => { getClips().then(d => { if (d) setClips(d); }); }, []);
+
+  const loadPDF = async (file) => {
+    if (!file || !file.name.endsWith('.pdf')) return;
+    setLoading(true);
+    setPdfName(file.name);
+    try {
+      const arrayBuffer = await file.arrayBuffer();
+      const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+      const pages = [];
+      for (let i = 1; i <= pdf.numPages; i++) {
+        const page = await pdf.getPage(i);
+        const textContent = await page.getTextContent();
+        const text = textContent.items.map(item => item.str).join(" ");
+        pages.push(text);
+      }
+      setPdfText(pages);
+      setCurrentPage(0);
+    } catch (err) {
+      console.error("PDF load error:", err);
+      setPdfText(["PDF 加载失败: " + err.message]);
+    }
+    setLoading(false);
+  };
+
+  const handleDrop = (e) => {
+    e.preventDefault();
+    const file = e.dataTransfer?.files?.[0];
+    if (file) loadPDF(file);
+  };
+
+  const handleFileSelect = (e) => {
+    const file = e.target.files?.[0];
+    if (file) loadPDF(file);
+  };
+
+  const saveClip = async () => {
+    if (!selectedText.trim()) return;
+    const clip = { folder: clipFolder, content: selectedText.trim(), source: pdfName, page: currentPage + 1 };
+    const id = await addClip(clip);
+    setClips(prev => [{ ...clip, id }, ...prev]);
+    setSelectedText("");
+  };
+
+  const handleDeleteClip = async (id) => {
+    await deleteClip(id);
+    setClips(prev => prev.filter(c => c.id !== id));
+  };
+
+  const extractAllToClips = async () => {
+    if (pdfText.length === 0) return;
+    for (let i = 0; i < pdfText.length; i++) {
+      if (pdfText[i].trim()) {
+        const clip = { folder: clipFolder, content: pdfText[i].trim().substring(0, 500), source: pdfName, page: i + 1 };
+        const id = await addClip(clip);
+        setClips(prev => [{ ...clip, id }, ...prev]);
+      }
+    }
+  };
+
+  const folderCounts = folders.map(f => ({ f, count: clips.filter(c => c.folder === f).length }));
+  const folderIcons = { "前言素材": "📝", "实验方法": "🧪", "结果讨论": "📊", "图片素材": "🖼", "其他": "📌" };
+  const [viewFolder, setViewFolder] = useState(null);
+
+  return (
+    <div>
+      <div className="panel fade-in" style={{marginBottom:16}}>
+        <div className="panel-header"><Icons.Book/>PDF 阅读器 & 素材截取</div>
+        <div className="panel-body">
+          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:16}}>
+            <div>
+              {pdfText.length === 0 ? (
+                <div onDrop={handleDrop} onDragOver={e=>e.preventDefault()} style={{background:'var(--bg-deep)',borderRadius:'var(--radius-sm)',border:'2px dashed var(--border)',padding:24,minHeight:260,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',gap:12,cursor:'pointer',transition:'border-color .2s'}} onClick={()=>fileInputRef.current?.click()}>
+                  {loading ? <TypingDots/> : <>
+                    <div style={{fontSize:48,opacity:.3}}>📄</div>
+                    <div style={{color:'var(--text-muted)',fontSize:14,textAlign:'center'}}>拖入 PDF 或点击选择文件</div>
+                    <button className="btn btn-secondary" style={{marginTop:6}} onClick={e=>{e.stopPropagation();fileInputRef.current?.click();}}>选择文件</button>
+                  </>}
+                  <input ref={fileInputRef} type="file" accept=".pdf" onChange={handleFileSelect} style={{display:'none'}}/>
+                </div>
+              ) : (
+                <div>
+                  <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:10}}>
+                    <div style={{fontSize:13,fontWeight:600,display:'flex',alignItems:'center',gap:6}}>📄 {pdfName} <span style={{fontSize:11,color:'var(--text-muted)'}}>({pdfText.length} 页)</span></div>
+                    <button className="btn btn-secondary btn-sm" onClick={()=>{setPdfText([]);setPdfName("");setCurrentPage(0);}}>关闭</button>
+                  </div>
+                  <div style={{background:'var(--bg-deep)',border:'1px solid var(--border)',borderRadius:'var(--radius-sm)',padding:16,minHeight:260,maxHeight:400,overflow:'auto',fontSize:13,lineHeight:1.8,color:'var(--text-secondary)',whiteSpace:'pre-wrap',userSelect:'text'}}>
+                    {pdfText[currentPage] || "(空白页)"}
+                  </div>
+                  <div style={{display:'flex',alignItems:'center',gap:8,marginTop:10}}>
+                    <button className="btn btn-secondary btn-sm" disabled={currentPage<=0} onClick={()=>setCurrentPage(p=>p-1)}>上一页</button>
+                    <span style={{fontSize:12,fontFamily:'var(--font-mono)',color:'var(--text-muted)'}}>{currentPage+1} / {pdfText.length}</span>
+                    <button className="btn btn-secondary btn-sm" disabled={currentPage>=pdfText.length-1} onClick={()=>setCurrentPage(p=>p+1)}>下一页</button>
+                    <div style={{marginLeft:'auto',display:'flex',gap:6}}>
+                      <select className="input-field" value={clipFolder} onChange={e=>setClipFolder(e.target.value)} style={{fontSize:11,padding:'4px 8px',width:'auto'}}>
+                        {folders.map(f=><option key={f} value={f}>{f}</option>)}
+                      </select>
+                      <button className="btn btn-ai btn-sm" onClick={extractAllToClips}>提取全部</button>
+                    </div>
+                  </div>
+                  <div style={{marginTop:10}}>
+                    <div style={{fontSize:12,color:'var(--text-muted)',marginBottom:4}}>选中文本后点击「保存片段」截取素材：</div>
+                    <div style={{display:'flex',gap:8}}>
+                      <textarea className="input-field" rows={2} value={selectedText} onChange={e=>setSelectedText(e.target.value)} placeholder="粘贴或输入要截取的文本片段..." style={{fontSize:12,resize:'vertical'}}/>
+                      <button className="btn btn-primary btn-sm" onClick={saveClip} disabled={!selectedText.trim()} style={{alignSelf:'flex-end'}}>保存片段</button>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+            <div>
+              <div style={{fontSize:13,fontWeight:600,marginBottom:10}}>素材库</div>
+              <div style={{display:'flex',flexDirection:'column',gap:6}}>
+                {folderCounts.map((x,i)=>(
+                  <div key={i} style={{padding:'11px 14px',background:viewFolder===x.f?'var(--bg-hover)':'var(--bg-elevated)',border:'1px solid var(--border)',borderRadius:'var(--radius-sm)',display:'flex',alignItems:'center',gap:10,cursor:'pointer',transition:'background .15s'}} onClick={()=>setViewFolder(viewFolder===x.f?null:x.f)}>
+                    <span style={{fontSize:16}}>{folderIcons[x.f]||"📌"}</span>
+                    <span style={{fontSize:13,fontWeight:500,flex:1}}>{x.f}</span>
+                    <span style={{fontSize:12,fontFamily:'var(--font-mono)',color:'var(--accent-green)'}}>{x.count}</span>
+                  </div>
+                ))}
+              </div>
+              {viewFolder && (
+                <div style={{marginTop:12,maxHeight:240,overflow:'auto'}}>
+                  <div style={{fontSize:12,fontWeight:600,color:'var(--text-muted)',marginBottom:6}}>{viewFolder} 素材列表</div>
+                  {clips.filter(c=>c.folder===viewFolder).length===0 && <div style={{fontSize:12,color:'var(--text-muted)',padding:8}}>暂无素材</div>}
+                  {clips.filter(c=>c.folder===viewFolder).map(c=>(
+                    <div key={c.id} style={{padding:'8px 10px',background:'var(--bg-deep)',border:'1px solid var(--border)',borderRadius:'var(--radius-sm)',marginBottom:4,fontSize:12}}>
+                      <div style={{color:'var(--text-secondary)',lineHeight:1.5,maxHeight:60,overflow:'hidden'}}>{c.content}</div>
+                      <div style={{display:'flex',alignItems:'center',gap:8,marginTop:4}}>
+                        {c.source&&<span style={{fontSize:10,color:'var(--text-muted)'}}>来源: {c.source} {c.page?`p.${c.page}`:""}</span>}
+                        <span style={{marginLeft:'auto',fontSize:10,color:'var(--accent-pink)',cursor:'pointer'}} onClick={()=>handleDeleteClip(c.id)}>删除</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 function ChecklistPage(){const[data,setData]=useState(CK_DATA);
   useEffect(()=>{getChecklist().then(d=>{if(d)setData(d);else saveChecklist(CK_DATA);});}, []);
@@ -804,14 +1257,72 @@ export default function SciFlowApp() {
   const [activeModule, setActiveModule] = useState("home");
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [config, setConfig] = useState(() => loadConfig(DEFAULT_CONFIG));
+  const [projects, setProjects] = useState([]);
+  const [currentProject, setCurrentProject] = useState({ id: 1, name: "锌空气电池催化剂研究", status: "active" });
+  const [showProjectMenu, setShowProjectMenu] = useState(false);
+  const [newProjectName, setNewProjectName] = useState("");
+  const [dbReady, setDbReady] = useState(false);
+
+  // Initialize projects from DB
+  useEffect(() => {
+    getProjects().then(p => {
+      if (p && p.length > 0) {
+        setProjects(p);
+        setCurrentProject(p[0]);
+      } else {
+        addProject("锌空气电池催化剂研究").then(id => {
+          const proj = { id, name: "锌空气电池催化剂研究", status: "active" };
+          setProjects([proj]);
+          setCurrentProject(proj);
+        });
+      }
+      setDbReady(true);
+    }).catch(() => {
+      setDbReady(true);
+    });
+  }, []);
 
   // Persist AI config to localStorage whenever it changes
   useEffect(() => { saveConfig(config); }, [config]);
+
+  const handleAddProject = async () => {
+    if (!newProjectName.trim()) return;
+    const id = await addProject(newProjectName.trim());
+    const proj = { id, name: newProjectName.trim(), status: "active" };
+    setProjects(prev => [...prev, proj]);
+    setCurrentProject(proj);
+    setNewProjectName("");
+    setShowProjectMenu(false);
+  };
+
+  const handleSwitchProject = (proj) => {
+    setCurrentProject(proj);
+    setShowProjectMenu(false);
+    setActiveModule("home");
+  };
+
+  const handleExportDB = async () => {
+    const data = await exportDatabase();
+    const blob = new Blob([data], { type: "application/x-sqlite3" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = "sciflow_database.sqlite"; a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const handleImportDB = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const buf = await file.arrayBuffer();
+    await importDatabase(buf);
+    window.location.reload();
+  };
 
   const mod = MODULES.find(m => m.id === activeModule);
   const title = activeModule === "home" ? "概览" : activeModule === "settings" ? "AI 配置" : mod?.label || "";
 
   const render = () => {
+    if (!dbReady) return <div style={{textAlign:'center',padding:40,color:'var(--text-muted)'}}>正在初始化 SQLite 数据库...<br/><TypingDots/></div>;
     switch (activeModule) {
       case "home": return <DashboardPage setActiveModule={setActiveModule} config={config} />;
       case "settings": return <SettingsPage config={config} setConfig={setConfig} />;
@@ -827,6 +1338,7 @@ export default function SciFlowApp() {
   };
 
   const provInfo = AI_PROVIDERS[config.provider];
+  const dbImportRef = useRef(null);
 
   return (
     <AIConfigContext.Provider value={config}>
@@ -836,7 +1348,31 @@ export default function SciFlowApp() {
         <aside className={`sidebar ${sidebarOpen ? 'open' : ''}`}>
           <div className="sidebar-header">
             <div className="sidebar-logo"><div className="logo-mark">SF</div><span className="logo-text">SciFlow</span></div>
-            <div className="project-selector"><span className="project-name">锌空气电池催化剂研究</span><span className="project-tag">进行中</span></div>
+            <div className="project-selector" onClick={()=>setShowProjectMenu(!showProjectMenu)} style={{position:'relative'}}>
+              <span className="project-name">{currentProject.name}</span>
+              <span className="project-tag">进行中</span>
+            </div>
+            {showProjectMenu && (
+              <div style={{position:'absolute',top:'100%',left:8,right:8,zIndex:300,background:'var(--bg-elevated)',border:'1px solid var(--border)',borderRadius:'var(--radius-sm)',padding:8,marginTop:4,boxShadow:'0 8px 32px rgba(0,0,0,.4)'}}>
+                <div style={{fontSize:10,fontWeight:700,color:'var(--text-muted)',marginBottom:6,textTransform:'uppercase',letterSpacing:1}}>切换项目</div>
+                {projects.map(p => (
+                  <div key={p.id} style={{padding:'8px 10px',borderRadius:'var(--radius-sm)',cursor:'pointer',fontSize:13,color:currentProject.id===p.id?'var(--accent-amber)':'var(--text-secondary)',background:currentProject.id===p.id?'var(--bg-hover)':'transparent',marginBottom:2}} onClick={()=>handleSwitchProject(p)}>
+                    {p.name}
+                  </div>
+                ))}
+                <div style={{borderTop:'1px solid var(--border)',marginTop:6,paddingTop:6}}>
+                  <div style={{display:'flex',gap:4}}>
+                    <input className="input-field" value={newProjectName} onChange={e=>setNewProjectName(e.target.value)} placeholder="新项目名称..." style={{fontSize:11,padding:'5px 8px'}} onKeyDown={e=>e.key==='Enter'&&handleAddProject()}/>
+                    <button className="btn btn-primary btn-sm" style={{fontSize:10,padding:'4px 8px'}} onClick={handleAddProject}>创建</button>
+                  </div>
+                </div>
+                <div style={{borderTop:'1px solid var(--border)',marginTop:6,paddingTop:6,display:'flex',gap:4}}>
+                  <button className="btn btn-secondary btn-sm" style={{fontSize:10,flex:1}} onClick={handleExportDB}>导出数据库</button>
+                  <button className="btn btn-secondary btn-sm" style={{fontSize:10,flex:1}} onClick={()=>dbImportRef.current?.click()}>导入数据库</button>
+                  <input ref={dbImportRef} type="file" accept=".sqlite,.db" onChange={handleImportDB} style={{display:'none'}}/>
+                </div>
+              </div>
+            )}
           </div>
           <nav className="sidebar-nav">
             <div className={`nav-item ${activeModule === 'home' ? 'active' : ''}`} onClick={() => { setActiveModule('home'); setSidebarOpen(false); }}>
@@ -858,7 +1394,13 @@ export default function SciFlowApp() {
               {activeModule === 'settings' && <div style={{ position: 'absolute', left: 0, top: '50%', transform: 'translateY(-50%)', width: 3, height: 18, borderRadius: '0 2px 2px 0', background: 'var(--ai-glow)' }} />}
             </div>
           </nav>
-          <div className="sidebar-footer"><div className="avatar">LW</div><div className="user-info"><div className="user-name">Li Wei</div><div className="user-role">博士研究生</div></div></div>
+          <div className="sidebar-footer">
+            <div className="avatar">LW</div>
+            <div className="user-info"><div className="user-name">Li Wei</div><div className="user-role">博士研究生</div></div>
+            <div style={{marginLeft:'auto',fontSize:10,color:'var(--text-muted)',display:'flex',alignItems:'center',gap:3}} title="SQLite 数据库">
+              <Icons.Database/>SQLite
+            </div>
+          </div>
         </aside>
         <main className="main-content">
           <div className="topbar">
