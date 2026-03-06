@@ -740,7 +740,7 @@ function KnowledgePage({ config }) {
   const [papers, setPapers] = useState(PAPERS);
   const [newPaper, setNewPaper] = useState(false);
   const [groupInput, setGroupInput] = useState("");
-  const [customGroups, setCustomGroups] = useState([]);
+  const [groupOrder, setGroupOrder] = useState(DEFAULT_GROUPS);
   const [np, setNp] = useState({ title: "", authors: "", journal: "", year: 2024, tags: "", group: "核心文献" });
   const importRef = useRef(null);
 
@@ -752,13 +752,17 @@ function KnowledgePage({ config }) {
       } else {
         await savePapers(PAPERS.map((p, i) => ({ ...p, id: i + 1 })));
       }
-      if (groupState?.groups?.length) setCustomGroups(groupState.groups);
+      if (groupState?.order?.length) {
+        setGroupOrder(groupState.order);
+      } else if (groupState?.groups?.length) {
+        setGroupOrder([...DEFAULT_GROUPS, ...groupState.groups.filter((g) => !DEFAULT_GROUPS.includes(g))]);
+      }
     })();
   }, []);
 
   useEffect(() => {
-    saveUIState("knowledge_groups", { groups: customGroups });
-  }, [customGroups]);
+    saveUIState("knowledge_groups", { order: groupOrder });
+  }, [groupOrder]);
 
   const handleAddPaper = async () => {
     if (!np.title.trim()) return;
@@ -795,22 +799,19 @@ function KnowledgePage({ config }) {
     URL.revokeObjectURL(a.href);
   };
 
-  const groupNames = [...new Set([...DEFAULT_GROUPS, ...customGroups, ...papers.map(p => p.group).filter(Boolean)])];
+  const discoveredGroups = [...new Set([...DEFAULT_GROUPS, ...groupOrder, ...papers.map(p => p.group).filter(Boolean)])];
+  const groupNames = [
+    ...groupOrder.filter((g) => discoveredGroups.includes(g)),
+    ...discoveredGroups.filter((g) => !groupOrder.includes(g)),
+  ];
   const groups = [{ name: "全部", count: papers.length }, ...groupNames.map((g, index) => ({ name: g, index, count: papers.filter(p => p.group === g).length }))];
-  const draggableGroups = groupNames.map((name) => ({ name, draggable: !DEFAULT_GROUPS.includes(name) }));
   const customGroupDrag = useDragReorder((fromIndex, toIndex) => {
-    const source = draggableGroups[fromIndex];
-    const target = draggableGroups[toIndex];
-    if (!source?.draggable || !target?.draggable) return;
-    const fromCustom = customGroups.indexOf(source.name);
-    const toCustom = customGroups.indexOf(target.name);
-    if (fromCustom === -1 || toCustom === -1) return;
-    setCustomGroups((prev) => reorderList(prev, fromCustom, toCustom));
+    setGroupOrder(prev => reorderList(prev.filter((g) => groupNames.includes(g)), fromIndex, toIndex));
   });
   const addGroup = () => {
     const name = groupInput.trim();
     if (!name || groupNames.includes(name)) return;
-    setCustomGroups(prev => [...prev, name]);
+    setGroupOrder(prev => [...prev, name]);
     setGroupInput("");
   };
   const deleteGroupByName = async (name) => {
@@ -818,7 +819,7 @@ function KnowledgePage({ config }) {
     const nextPapers = papers.map(p => p.group === name ? { ...p, group: "未分组" } : p);
     setPapers(nextPapers);
     await savePapers(nextPapers);
-    setCustomGroups(prev => prev.filter(g => g !== name));
+    setGroupOrder(prev => prev.filter(g => g !== name));
     if (grp === name) setGrp("全部");
   };
   const filt=grp==="全部"?papers:papers.filter(p=>p.group===grp);
@@ -830,7 +831,7 @@ function KnowledgePage({ config }) {
       <div className="kb-sidebar fade-in"><div style={{fontSize:10,fontWeight:700,color:'var(--text-muted)',marginBottom:8,textTransform:'uppercase',letterSpacing:1.5}}>文献分组</div>
         {groups.map((g) => {
           const dragIndex = groupNames.indexOf(g.name);
-          return <div key={g.name} className={`group-item ${grp===g.name?'active':''} ${customGroupDrag.draggingIndex===dragIndex?'dragging':''}`} onClick={()=>setGrp(g.name)} draggable={!DEFAULT_GROUPS.includes(g.name)} onDragStart={customGroupDrag.startDrag(dragIndex)} onDragOver={customGroupDrag.dragOver} onDrop={customGroupDrag.dropAt(dragIndex)} onDragEnd={customGroupDrag.endDrag}><span className="drag-handle" title="拖拽排序">⋮⋮</span><Icons.Folder/>{g.name}<span className="group-count">{g.count}</span>{g.name!=="全部"&&!DEFAULT_GROUPS.includes(g.name)&&<button className="btn btn-secondary btn-sm" style={{padding:'2px 6px',marginLeft:6,color:'var(--accent-pink)'}} onClick={(e)=>{e.stopPropagation();deleteGroupByName(g.name);}}>删</button>}</div>;
+          return <div key={g.name} className={`group-item ${grp===g.name?'active':''} ${customGroupDrag.draggingIndex===dragIndex?'dragging':''}`} onClick={()=>setGrp(g.name)} draggable={g.name!=="全部"} onDragStart={g.name!=="全部"?customGroupDrag.startDrag(dragIndex):undefined} onDragOver={g.name!=="全部"?customGroupDrag.dragOver:undefined} onDrop={g.name!=="全部"?customGroupDrag.dropAt(dragIndex):undefined} onDragEnd={g.name!=="全部"?customGroupDrag.endDrag:undefined}><span className="drag-handle" title="拖拽排序">⋮⋮</span><Icons.Folder/>{g.name}<span className="group-count">{g.count}</span>{g.name!=="全部"&&!DEFAULT_GROUPS.includes(g.name)&&<button className="btn btn-secondary btn-sm" style={{padding:'2px 6px',marginLeft:6,color:'var(--accent-pink)'}} onClick={(e)=>{e.stopPropagation();deleteGroupByName(g.name);}}>删</button>}</div>;
         })}
         <div style={{display:'flex',gap:6,marginTop:8}}><input className="input-field" placeholder="新增分组" value={groupInput} onChange={e=>setGroupInput(e.target.value)} onKeyDown={e=>e.key==='Enter'&&addGroup()}/><button className="btn btn-secondary btn-sm" onClick={addGroup}><Icons.Plus/></button></div>
         <button className="btn btn-primary btn-sm" style={{marginTop:12,width:'100%'}} onClick={()=>setNewPaper(true)}><Icons.Plus/>添加文献</button>
@@ -1039,6 +1040,25 @@ export default function SciFlowApp() {
   // Persist AI config to localStorage whenever it changes
   useEffect(() => { saveConfig(config); }, [config]);
 
+  useEffect(() => {
+    (async () => {
+      const topicState = await getUIState("topics_state");
+      if (topicState?.topics?.length) {
+        setTopics(topicState.topics);
+        if (topicState.activeTopicId && topicState.topics.find((t) => t.id === topicState.activeTopicId)) {
+          setActiveTopicId(topicState.activeTopicId);
+        } else {
+          setActiveTopicId(topicState.topics[0].id);
+        }
+      }
+    })();
+  }, []);
+
+  useEffect(() => {
+    if (!topics.length) return;
+    saveUIState("topics_state", { topics, activeTopicId });
+  }, [topics, activeTopicId]);
+
   const mod = MODULES.find(m => m.id === activeModule);
   const title = activeModule === "home" ? "概览" : activeModule === "settings" ? "AI 配置" : mod?.label || "";
 
@@ -1074,6 +1094,7 @@ export default function SciFlowApp() {
       return next;
     });
   };
+  const topicDrag = useDragReorder((fromIndex, toIndex) => setTopics(prev => reorderList(prev, fromIndex, toIndex)));
 
   return (
     <AIConfigContext.Provider value={config}>
@@ -1086,8 +1107,10 @@ export default function SciFlowApp() {
             <div style={{display:'flex',flexDirection:'column',gap:8}}>
               <div className="project-selector"><span className="project-name">{currentTopic?.name}</span><span className="project-tag">{currentTopic?.status}</span></div>
               <select className="input-field" value={activeTopicId} onChange={e=>setActiveTopicId(Number(e.target.value))}>{topics.map(t=><option key={t.id} value={t.id}>{t.name}</option>)}</select>
-              <div style={{display:'flex',flexWrap:'wrap',gap:6}}>{topics.map(t=><button key={t.id} className="btn btn-secondary btn-sm" style={{padding:'2px 8px',color:'var(--text-secondary)'}} onClick={()=>deleteTopic(t.id)} disabled={topics.length<=1}>删 {t.name}</button>)}</div>
-              <div style={{display:'flex',gap:6}}><input className="input-field" placeholder="新增课题" value={topicName} onChange={e=>setTopicName(e.target.value)}/><button className="btn btn-secondary btn-sm" onClick={addTopic}><Icons.Plus/></button></div>
+              <div style={{display:'flex',flexDirection:'column',gap:6,maxHeight:140,overflowY:'auto'}}>
+                {topics.map((t, index)=><div key={t.id} className={`group-item ${activeTopicId===t.id?'active':''} ${topicDrag.draggingIndex===index?'dragging':''}`} style={{marginBottom:0}} onClick={()=>setActiveTopicId(t.id)} draggable onDragStart={topicDrag.startDrag(index)} onDragOver={topicDrag.dragOver} onDrop={topicDrag.dropAt(index)} onDragEnd={topicDrag.endDrag}><span className="drag-handle" title="拖拽排序">⋮⋮</span><span style={{flex:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{t.name}</span><button className="btn btn-secondary btn-sm" style={{padding:'2px 8px',color:'var(--accent-pink)'}} onClick={(e)=>{e.stopPropagation();deleteTopic(t.id);}} disabled={topics.length<=1}>删</button></div>)}
+              </div>
+              <div style={{display:'flex',gap:6}}><input className="input-field" placeholder="新增课题" value={topicName} onChange={e=>setTopicName(e.target.value)} onKeyDown={e=>e.key==='Enter'&&addTopic()}/><button className="btn btn-secondary btn-sm" onClick={addTopic}><Icons.Plus/></button></div>
             </div>
           </div>
           <nav className="sidebar-nav">
