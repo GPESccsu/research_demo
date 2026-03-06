@@ -1,8 +1,32 @@
 import { useState, useEffect, useRef, useCallback, createContext, useContext } from "react";
 import { saveConfig, loadConfig, getPapers, savePapers, addPaper, deletePaper, getLogs, saveLogs, addLog, getChecklist, saveChecklist, getChatHistory, saveChatMessage, clearChatHistory, getSynonymGroups, saveSynonymGroup, deleteSynonymGroup, getClips, addClip, deleteClip, getDrafts, saveDraft, getProjects, addProject, deleteProject, getProblemTree, saveProblemTree, addProblemNode, updateProblemNode, deleteProblemNode, exportDatabase, importDatabase, paperToBibTeX, papersToRIS, parseBibTeX, parseRIS } from "./db.js";
-import * as pdfjsLib from "pdfjs-dist";
+// PDF.js loaded dynamically from CDN to avoid bundling issues
+const PDFJS_CDN_VERSION = "4.9.155";
+const PDFJS_CDN_BASE = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${PDFJS_CDN_VERSION}`;
+let _pdfjsLib = null;
 
-pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.mjs`;
+async function getPdfjs() {
+  if (_pdfjsLib) return _pdfjsLib;
+  // Dynamically import pdf.js from CDN via script tag
+  return new Promise((resolve, reject) => {
+    if (window.pdfjsLib) { _pdfjsLib = window.pdfjsLib; resolve(_pdfjsLib); return; }
+    const script = document.createElement("script");
+    script.src = `${PDFJS_CDN_BASE}/pdf.min.mjs`;
+    script.type = "module";
+    // Fallback: use legacy build that works as a regular script
+    const scriptLegacy = document.createElement("script");
+    scriptLegacy.src = `${PDFJS_CDN_BASE}/pdf.min.js`;
+    scriptLegacy.onload = () => {
+      if (window.pdfjsLib) {
+        window.pdfjsLib.GlobalWorkerOptions.workerSrc = `${PDFJS_CDN_BASE}/pdf.worker.min.js`;
+        _pdfjsLib = window.pdfjsLib;
+        resolve(_pdfjsLib);
+      } else { reject(new Error("pdf.js failed to load")); }
+    };
+    scriptLegacy.onerror = () => reject(new Error("Failed to load pdf.js from CDN"));
+    document.head.appendChild(scriptLegacy);
+  });
+}
 
 // ═══════════════════════════════════════════════════════════
 // SCIFLOW — AI-POWERED RESEARCH ASSISTANT
@@ -1046,7 +1070,8 @@ function ReadingPage() {
     setPdfName(file.name);
     try {
       const arrayBuffer = await file.arrayBuffer();
-      const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+      const pdfjs = await getPdfjs();
+      const pdf = await pdfjs.getDocument({ data: arrayBuffer }).promise;
       const pages = [];
       for (let i = 1; i <= pdf.numPages; i++) {
         const page = await pdf.getPage(i);

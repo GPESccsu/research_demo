@@ -5,7 +5,31 @@
 // Also supports exporting/importing .sqlite files.
 // ═══════════════════════════════════════════════════════════
 
-import initSqlJs from "sql.js";
+// sql.js loaded dynamically — works whether installed via npm or not
+let _initSqlJs = null;
+
+async function getInitSqlJs() {
+  if (_initSqlJs) return _initSqlJs;
+  try {
+    // Try npm import first (works if sql.js is installed)
+    const mod = await import("sql.js");
+    _initSqlJs = mod.default || mod;
+    return _initSqlJs;
+  } catch {
+    // Fallback: load from CDN
+    return new Promise((resolve, reject) => {
+      if (window.initSqlJs) { _initSqlJs = window.initSqlJs; resolve(_initSqlJs); return; }
+      const script = document.createElement("script");
+      script.src = "https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.12.0/sql-wasm.js";
+      script.onload = () => {
+        if (window.initSqlJs) { _initSqlJs = window.initSqlJs; resolve(_initSqlJs); }
+        else reject(new Error("sql.js failed to load"));
+      };
+      script.onerror = () => reject(new Error("Failed to load sql.js from CDN"));
+      document.head.appendChild(script);
+    });
+  }
+}
 
 const DB_NAME = "sciflow_sqlite";
 const IDB_STORE = "sciflow_store";
@@ -132,7 +156,8 @@ async function getDB() {
   if (_db) return _db;
   if (_initPromise) return _initPromise;
   _initPromise = (async () => {
-    _SQL = await initSqlJs({
+    const initFn = await getInitSqlJs();
+    _SQL = await initFn({
       locateFile: (file) => `https://sql.js.org/dist/${file}`,
     });
     const saved = await idbGet(IDB_KEY);
