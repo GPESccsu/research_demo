@@ -706,11 +706,22 @@ function TopicPage({ config }) {
 }
 
 function KnowledgePage({ config }) {
+  const DEFAULT_GROUPS = ["核心文献", "综述文献", "高被引", "拓展阅读", "导入文献"];
   const [grp, setGrp] = useState("全部");const [sel, setSel] = useState(null);const [sum, setSum] = useState("");const [sL, setSL] = useState(false);
   const [papers, setPapers] = useState(PAPERS);
   const [newPaper, setNewPaper] = useState(false);
+  const [groupInput, setGroupInput] = useState("");
+  const [customGroups, setCustomGroups] = useState(() => {
+    try {
+      return JSON.parse(localStorage.getItem("sciflow.customGroups") || "[]");
+    } catch {
+      return [];
+    }
+  });
   const [np, setNp] = useState({ title: "", authors: "", journal: "", year: 2024, tags: "", group: "核心文献" });
   const importRef = useRef(null);
+
+  useEffect(() => { localStorage.setItem("sciflow.customGroups", JSON.stringify(customGroups)); }, [customGroups]);
 
   useEffect(() => { getPapers().then(d => { if (d) setPapers(d); else savePapers(PAPERS.map((p,i) => ({...p, id: i+1}))); }); }, []);
 
@@ -749,8 +760,22 @@ function KnowledgePage({ config }) {
     URL.revokeObjectURL(a.href);
   };
 
-  const groupNames = [...new Set(papers.map(p => p.group))];
+  const groupNames = [...new Set([...DEFAULT_GROUPS, ...customGroups, ...papers.map(p => p.group).filter(Boolean)])];
   const groups = [{ name: "全部", count: papers.length }, ...groupNames.map(g => ({ name: g, count: papers.filter(p => p.group === g).length }))];
+  const addGroup = () => {
+    const name = groupInput.trim();
+    if (!name || groupNames.includes(name)) return;
+    setCustomGroups(prev => [...prev, name]);
+    setGroupInput("");
+  };
+  const deleteGroupByName = async (name) => {
+    if (!name || DEFAULT_GROUPS.includes(name)) return;
+    const nextPapers = papers.map(p => p.group === name ? { ...p, group: "未分组" } : p);
+    setPapers(nextPapers);
+    await savePapers(nextPapers);
+    setCustomGroups(prev => prev.filter(g => g !== name));
+    if (grp === name) setGrp("全部");
+  };
   const filt=grp==="全部"?papers:papers.filter(p=>p.group===grp);
   const doSum=async(p)=>{setSel(p);setSum("");setSL(true);const r=await callAI(config,'你是材料科学资深研究员。简析论文:1)核心问题 2)方法创新 3)结论 4)对锌空气电池课题参考价值。中文≤150字。',`标题:${p.title}
 作者:${p.authors}
@@ -758,7 +783,8 @@ function KnowledgePage({ config }) {
   return(
     <div className="kb-layout">
       <div className="kb-sidebar fade-in"><div style={{fontSize:10,fontWeight:700,color:'var(--text-muted)',marginBottom:8,textTransform:'uppercase',letterSpacing:1.5}}>文献分组</div>
-        {groups.map(g=><div key={g.name} className={`group-item ${grp===g.name?'active':''}`} onClick={()=>setGrp(g.name)}><Icons.Folder/>{g.name}<span className="group-count">{g.count}</span></div>)}
+        {groups.map(g=><div key={g.name} className={`group-item ${grp===g.name?'active':''}`} onClick={()=>setGrp(g.name)}><Icons.Folder/>{g.name}<span className="group-count">{g.count}</span>{g.name!=="全部"&&!DEFAULT_GROUPS.includes(g.name)&&<button className="btn btn-secondary btn-sm" style={{padding:'2px 6px',marginLeft:6,color:'var(--accent-pink)'}} onClick={(e)=>{e.stopPropagation();deleteGroupByName(g.name);}}>删</button>}</div>)}
+        <div style={{display:'flex',gap:6,marginTop:8}}><input className="input-field" placeholder="新增分组" value={groupInput} onChange={e=>setGroupInput(e.target.value)} onKeyDown={e=>e.key==='Enter'&&addGroup()}/><button className="btn btn-secondary btn-sm" onClick={addGroup}><Icons.Plus/></button></div>
         <button className="btn btn-primary btn-sm" style={{marginTop:12,width:'100%'}} onClick={()=>setNewPaper(true)}><Icons.Plus/>添加文献</button>
         <button className="btn btn-secondary btn-sm" style={{marginTop:8,width:'100%'}} onClick={()=>importRef.current?.click()}>导入 RIS/BibTeX</button>
         <button className="btn btn-secondary btn-sm" style={{marginTop:8,width:'100%'}} onClick={exportRIS}>导出 RIS</button>
@@ -770,7 +796,7 @@ function KnowledgePage({ config }) {
             <div style={{display:'flex',flexDirection:'column',gap:8}}>
               <input className="input-field" placeholder="论文标题..." value={np.title} onChange={e=>setNp(p=>({...p,title:e.target.value}))}/>
               <div style={{display:'flex',gap:8}}><input className="input-field" placeholder="作者..." value={np.authors} onChange={e=>setNp(p=>({...p,authors:e.target.value}))}/><input className="input-field" placeholder="期刊..." value={np.journal} onChange={e=>setNp(p=>({...p,journal:e.target.value}))}/></div>
-              <div style={{display:'flex',gap:8}}><input className="input-field" type="number" placeholder="年份" value={np.year} onChange={e=>setNp(p=>({...p,year:parseInt(e.target.value)||2024}))}/><input className="input-field" placeholder="标签(逗号分隔)..." value={np.tags} onChange={e=>setNp(p=>({...p,tags:e.target.value}))}/><select className="input-field" value={np.group} onChange={e=>setNp(p=>({...p,group:e.target.value}))} style={{maxWidth:140}}><option>核心文献</option><option>综述文献</option><option>高被引</option><option>拓展阅读</option></select></div>
+              <div style={{display:'flex',gap:8}}><input className="input-field" type="number" placeholder="年份" value={np.year} onChange={e=>setNp(p=>({...p,year:parseInt(e.target.value)||2024}))}/><input className="input-field" placeholder="标签(逗号分隔)..." value={np.tags} onChange={e=>setNp(p=>({...p,tags:e.target.value}))}/><select className="input-field" value={np.group} onChange={e=>setNp(p=>({...p,group:e.target.value}))} style={{maxWidth:140}}>{groupNames.map(g=><option key={g} value={g}>{g}</option>)}</select></div>
               <div style={{display:'flex',gap:8}}><button className="btn btn-primary btn-sm" onClick={handleAddPaper}>保存</button><button className="btn btn-secondary btn-sm" onClick={()=>setNewPaper(false)}>取消</button></div>
             </div>
           </div>
@@ -788,6 +814,7 @@ function ExperimentPage({ config }) {
   const diag=async()=>{if(!di.trim())return;setDL(true);setDr("");const r=await callAI(config,'你是材料科学实验导师。分析实验异常:1)2-3个原因 2)排查路径 3)解决建议。中文≤200字。',di,600);setDL(false);setDr(r||"AI不可用");};
   const updateNode = (id, key, value) => setNodes(prev => prev.map(n => n.id===id?{...n,[key]:value}:n));
   const addNode = () => setNodes(prev => [...prev, {id:Date.now(), level:2, label:'新节点', text:'可编辑内容', refs:'', color:'var(--accent-blue)'}]);
+  const deleteNode = (id) => setNodes(prev => prev.filter(n => n.id !== id));
   return(
     <div>
       <div className="panel fade-in" style={{marginBottom:16}}><div className="panel-header"><Icons.Wand/>AI 问题诊断器<AIBadge/></div><div className="panel-body">
@@ -797,7 +824,7 @@ function ExperimentPage({ config }) {
         {dr&&!dL&&<div className="ai-summary-panel" style={{marginTop:10}}><div className="ai-summary-header"><Icons.Sparkle/>诊断结果</div><div className="ai-summary-text">{dr}</div></div>}
       </div></div>
       <div className="section-header"><div className="section-title">问题分解树</div><button className="btn btn-secondary btn-sm" onClick={addNode}><Icons.Plus/>新增节点</button></div>
-      <div style={{display:'flex',flexDirection:'column',gap:10}}>{nodes.map((n,i)=><div key={n.id} className={`tree-node tree-level-${n.level} fade-in delay-${(i%4)+1}`}><input className="input-field" style={{marginBottom:6,maxWidth:220,color:n.color,fontWeight:600}} value={n.label} onChange={e=>updateNode(n.id,'label',e.target.value)}/><textarea className="input-field" rows={2} value={n.text} onChange={e=>updateNode(n.id,'text',e.target.value)} style={{resize:'vertical'}}/>{n.refs!==undefined&&<input className="input-field" style={{marginTop:6}} placeholder="关联文献" value={n.refs||''} onChange={e=>updateNode(n.id,'refs',e.target.value)}/>}</div>)}</div>
+      <div style={{display:'flex',flexDirection:'column',gap:10}}>{nodes.map((n,i)=><div key={n.id} className={`tree-node tree-level-${n.level} fade-in delay-${(i%4)+1}`}><div style={{display:'flex',gap:8,alignItems:'center'}}><input className="input-field" style={{marginBottom:6,maxWidth:220,color:n.color,fontWeight:600}} value={n.label} onChange={e=>updateNode(n.id,'label',e.target.value)}/><button className="btn btn-secondary btn-sm" style={{marginBottom:6,color:'var(--accent-pink)'}} onClick={()=>deleteNode(n.id)}>删除</button></div><textarea className="input-field" rows={2} value={n.text} onChange={e=>updateNode(n.id,'text',e.target.value)} style={{resize:'vertical'}}/>{n.refs!==undefined&&<input className="input-field" style={{marginTop:6}} placeholder="关联文献" value={n.refs||''} onChange={e=>updateNode(n.id,'refs',e.target.value)}/>}</div>)}</div>
     </div>);
 }
 
@@ -809,11 +836,12 @@ function WritingPage({ config }) {
 
 尽管已有大量研究，但对其构效关系的理解仍不够深入。`;
   const [text, setText] = useState(defaultText);
+  const [outline, setOutline] = useState([{id:"abstract",label:"摘要"},{id:"intro",label:"1. 引言"},{id:"intro-bg",label:"1.1 背景",sub:true},{id:"methods",label:"2. 实验方法"},{id:"results",label:"3. 结果讨论"},{id:"conclusion",label:"4. 结论"}]);
+  const [newSectionName, setNewSectionName] = useState("");
 
   useEffect(() => { getDrafts().then(d => { const found = d.find(x => x.id === sec); if (found) setText(found.content); }); }, [sec]);
   const saveText = useCallback((val) => { setText(val); saveDraft({ id: sec, content: val, updatedAt: Date.now() }); }, [sec]);
   const [sug, setSug] = useState([]);const [aL, setAL] = useState(false);const [aq, setAq] = useState("");
-  const outline=[{id:"abstract",label:"摘要"},{id:"intro",label:"1. 引言"},{id:"intro-bg",label:"1.1 背景",sub:true},{id:"methods",label:"2. 实验方法"},{id:"results",label:"3. 结果讨论"},{id:"conclusion",label:"4. 结论"}];
   const analyze=async()=>{setAL(true);setSug([]);const r=await callAIJSON(config,'学术写作教授。分析论文段落。返回JSON:{"suggestions":[{"type":"观点检查|逻辑分析|语言润色|引用建议","content":"...","priority":"high|medium|low"}]}。3-4条。',`引言:
 ${text}`,800);setAL(false);if(r?.suggestions)setSug(r.suggestions);};
   const ask=async()=>{if(!aq.trim())return;const q=aq;setAq("");setAL(true);const r=await callAI(config,'锌空气电池论文写作助手。中文≤150字。',`段落:
@@ -822,10 +850,25 @@ ${text}
 问题:${q}`,500);setAL(false);if(r)setSug(p=>[...p,{type:"AI 回答",content:r,priority:"high"}]);};
   const pc={high:'var(--accent-orange)',medium:'var(--accent-amber)',low:'var(--accent-blue)'};
   const editSuggestion = (i, val) => setSug(prev => prev.map((s,idx)=>idx===i?{...s, content:val}:s));
+  const addSection = () => {
+    const label = newSectionName.trim();
+    if (!label) return;
+    const id = `section-${Date.now()}`;
+    setOutline(prev => [...prev, { id, label }]);
+    setSec(id);
+    saveDraft({ id, content: "", updatedAt: Date.now() });
+    setNewSectionName("");
+  };
+  const updateSectionLabel = (id, label) => setOutline(prev => prev.map(s => s.id === id ? { ...s, label } : s));
+  const deleteSection = (id) => {
+    setOutline(prev => prev.filter(s => s.id !== id));
+    if (sec === id) setSec("intro");
+  };
+  const currentSectionLabel = outline.find(o => o.id === sec)?.label || "正文";
   return(
     <div className="writing-layout">
-      <div className="writing-outline fade-in"><div style={{fontSize:10,fontWeight:700,color:'var(--text-muted)',marginBottom:8,textTransform:'uppercase',letterSpacing:1.5}}>大纲</div>{outline.map(o=><div key={o.id} className={`outline-item ${o.sub?'outline-sub':''} ${sec===o.id?'active':''}`} onClick={()=>setSec(o.id)}>{!o.sub&&<Icons.ChevronRight/>}{o.label}</div>)}</div>
-      <div className="writing-editor fade-in delay-1"><div className="editor-toolbar">{"B,I,H2,引用".split(',').map(b=><button key={b} className="tool-btn">{b}</button>)}<div style={{marginLeft:'auto'}}><button className="tool-btn ai-tool" onClick={analyze} disabled={aL}><Icons.Sparkle/>AI 分析</button></div></div><div style={{flex:1,padding:'20px',overflow:'auto'}}><h2 style={{fontFamily:'var(--font-serif)',fontSize:20,fontWeight:700,marginBottom:14}}>1. 引言</h2><textarea className="editor-textarea" value={text} onChange={e=>saveText(e.target.value)} style={{minHeight:260}}/></div></div>
+      <div className="writing-outline fade-in"><div style={{fontSize:10,fontWeight:700,color:'var(--text-muted)',marginBottom:8,textTransform:'uppercase',letterSpacing:1.5}}>大纲</div>{outline.map(o=><div key={o.id} className={`outline-item ${o.sub?'outline-sub':''} ${sec===o.id?'active':''}`} onClick={()=>setSec(o.id)}>{!o.sub&&<Icons.ChevronRight/>}<span style={{flex:1}}>{o.label}</span><button className="btn btn-secondary btn-sm" style={{padding:'1px 6px'}} onClick={(e)=>{e.stopPropagation();deleteSection(o.id);}}>删</button></div>)}<div style={{display:'flex',gap:6,marginTop:8}}><input className="input-field" placeholder="新增章节" value={newSectionName} onChange={e=>setNewSectionName(e.target.value)} onKeyDown={e=>e.key==='Enter'&&addSection()}/><button className="btn btn-secondary btn-sm" onClick={addSection}><Icons.Plus/></button></div></div>
+      <div className="writing-editor fade-in delay-1"><div className="editor-toolbar">{"B,I,H2,引用".split(',').map(b=><button key={b} className="tool-btn">{b}</button>)}<div style={{marginLeft:'auto'}}><button className="tool-btn ai-tool" onClick={analyze} disabled={aL}><Icons.Sparkle/>AI 分析</button></div></div><div style={{flex:1,padding:'20px',overflow:'auto'}}><input className="input-field" value={currentSectionLabel} onChange={e=>updateSectionLabel(sec,e.target.value)} style={{fontFamily:'var(--font-serif)',fontSize:20,fontWeight:700,marginBottom:14,maxWidth:360}}/><textarea className="editor-textarea" value={text} onChange={e=>saveText(e.target.value)} style={{minHeight:260}}/></div></div>
       <div className="writing-ai-panel fade-in delay-2"><div className="ai-panel-header"><Icons.Sparkle/>AI 写作助手<AIBadge/></div><div className="ai-panel-body">
         {sug.length===0&&!aL&&<div style={{textAlign:'center',padding:'32px 16px',color:'var(--text-muted)',fontSize:13}}><div style={{fontSize:28,marginBottom:10,opacity:.4}}>✨</div>点击「AI 分析」获取建议</div>}
         {aL&&<div className="ai-suggestion"><div className="ai-suggestion-label"><Icons.Sparkle/>分析中...</div><TypingDots/></div>}
@@ -963,6 +1006,14 @@ export default function SciFlowApp() {
     setActiveTopicId(t.id);
     setTopicName("");
   };
+  const deleteTopic = (id) => {
+    setTopics(prev => {
+      if (prev.length <= 1) return prev;
+      const next = prev.filter(t => t.id !== id);
+      if (!next.find(t => t.id === activeTopicId)) setActiveTopicId(next[0].id);
+      return next;
+    });
+  };
 
   return (
     <AIConfigContext.Provider value={config}>
@@ -975,6 +1026,7 @@ export default function SciFlowApp() {
             <div style={{display:'flex',flexDirection:'column',gap:8}}>
               <div className="project-selector"><span className="project-name">{currentTopic?.name}</span><span className="project-tag">{currentTopic?.status}</span></div>
               <select className="input-field" value={activeTopicId} onChange={e=>setActiveTopicId(Number(e.target.value))}>{topics.map(t=><option key={t.id} value={t.id}>{t.name}</option>)}</select>
+              <div style={{display:'flex',flexWrap:'wrap',gap:6}}>{topics.map(t=><button key={t.id} className="btn btn-secondary btn-sm" style={{padding:'2px 8px',color:'var(--text-secondary)'}} onClick={()=>deleteTopic(t.id)} disabled={topics.length<=1}>删 {t.name}</button>)}</div>
               <div style={{display:'flex',gap:6}}><input className="input-field" placeholder="新增课题" value={topicName} onChange={e=>setTopicName(e.target.value)}/><button className="btn btn-secondary btn-sm" onClick={addTopic}><Icons.Plus/></button></div>
             </div>
           </div>
