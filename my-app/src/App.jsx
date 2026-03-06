@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback, createContext, useContext } from "react";
-import { saveConfig, loadConfig, getPapers, savePapers, addPaper, deletePaper, getLogs, saveLogs, addLog, getChecklist, saveChecklist, getChatHistory, saveChatMessage, clearChatHistory, getSynonymGroups, saveSynonymGroup, deleteSynonymGroup, getClips, addClip, getDrafts, saveDraft } from "./db.js";
+import { saveConfig, loadConfig, getPapers, savePapers, addPaper, deletePaper, getLogs, saveLogs, addLog, getChecklist, saveChecklist, getChatHistory, saveChatMessage, clearChatHistory, getSynonymGroups, saveSynonymGroup, deleteSynonymGroup, getClips, addClip, getDrafts, saveDraft, getUIState, saveUIState } from "./db.js";
 
 // ═══════════════════════════════════════════════════════════
 // SCIFLOW — AI-POWERED RESEARCH ASSISTANT
@@ -400,10 +400,10 @@ const CSS = `
 .db-results{display:flex;gap:10px;flex-wrap:wrap}.db-badge{padding:6px 12px;border-radius:var(--radius-sm);font-size:12px;background:var(--bg-elevated);border:1px solid var(--border);display:flex;align-items:center;gap:6px}.db-count{font-family:var(--font-mono);font-weight:600;color:var(--accent-green)}
 .kb-layout{display:grid;grid-template-columns:220px 1fr;gap:16px;min-height:500px}@media(max-width:960px){.kb-layout{grid-template-columns:1fr}}
 .kb-sidebar{background:var(--bg-surface);border:1px solid var(--border);border-radius:var(--radius-md);padding:14px;overflow-y:auto}
-.group-item{display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:var(--radius-sm);cursor:pointer;font-size:13px;color:var(--text-secondary);transition:all .15s;margin-bottom:1px}.group-item:hover{background:var(--bg-hover);color:var(--text-primary)}.group-item.active{background:var(--bg-hover);color:var(--text-primary);font-weight:500}.group-count{margin-left:auto;font-size:11px;font-family:var(--font-mono);color:var(--text-muted)}
+.group-item{display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:var(--radius-sm);cursor:pointer;font-size:13px;color:var(--text-secondary);transition:all .15s;margin-bottom:1px}.group-item:hover{background:var(--bg-hover);color:var(--text-primary)}.group-item.active{background:var(--bg-hover);color:var(--text-primary);font-weight:500}.group-item.dragging{opacity:.55}.group-count{margin-left:auto;font-size:11px;font-family:var(--font-mono);color:var(--text-muted)}.drag-handle{cursor:grab;color:var(--text-muted);display:inline-flex;align-items:center;padding:2px 0}.drag-handle:active{cursor:grabbing}
 .writing-layout{display:grid;grid-template-columns:190px 1fr 280px;gap:14px;min-height:560px}@media(max-width:1100px){.writing-layout{grid-template-columns:1fr;min-height:auto}}
 .writing-outline{background:var(--bg-surface);border:1px solid var(--border);border-radius:var(--radius-md);padding:14px;overflow-y:auto}
-.outline-item{padding:7px 10px;border-radius:var(--radius-sm);cursor:pointer;font-size:13px;color:var(--text-secondary);transition:all .15s;display:flex;align-items:center;gap:5px;margin-bottom:1px}.outline-item:hover{background:var(--bg-hover);color:var(--text-primary)}.outline-item.active{color:var(--accent-amber);font-weight:500}.outline-sub{padding-left:20px;font-size:12px}
+.outline-item{padding:7px 10px;border-radius:var(--radius-sm);cursor:pointer;font-size:13px;color:var(--text-secondary);transition:all .15s;display:flex;align-items:center;gap:5px;margin-bottom:1px}.outline-item:hover{background:var(--bg-hover);color:var(--text-primary)}.outline-item.active{color:var(--accent-amber);font-weight:500}.outline-item.dragging{opacity:.55}.outline-sub{padding-left:20px;font-size:12px}
 .writing-editor{background:var(--bg-surface);border:1px solid var(--border);border-radius:var(--radius-md);display:flex;flex-direction:column;overflow:hidden}
 .editor-toolbar{padding:8px 14px;border-bottom:1px solid var(--border);display:flex;gap:4px;flex-wrap:wrap;align-items:center}
 .tool-btn{padding:5px 9px;border-radius:5px;background:none;border:1px solid transparent;color:var(--text-secondary);cursor:pointer;font-size:12px;transition:all .15s;font-family:var(--font-sans)}.tool-btn:hover{background:var(--bg-hover);color:var(--text-primary)}.tool-btn.ai-tool{color:var(--ai-glow)}.tool-btn.ai-tool:hover{background:rgba(167,139,250,.1)}
@@ -705,25 +705,60 @@ function TopicPage({ config }) {
     </div>);
 }
 
+function reorderList(list, fromIndex, toIndex) {
+  const next = [...list];
+  const [moved] = next.splice(fromIndex, 1);
+  next.splice(toIndex, 0, moved);
+  return next;
+}
+
+function useDragReorder(onReorder) {
+  const [draggingIndex, setDraggingIndex] = useState(null);
+  const startDrag = (index) => (e) => {
+    setDraggingIndex(index);
+    e.dataTransfer.effectAllowed = "move";
+    e.dataTransfer.setData("text/plain", String(index));
+  };
+  const dragOver = (e) => e.preventDefault();
+  const dropAt = (targetIndex) => (e) => {
+    e.preventDefault();
+    const sourceIndex = Number(e.dataTransfer.getData("text/plain"));
+    if (Number.isNaN(sourceIndex) || sourceIndex === targetIndex) {
+      setDraggingIndex(null);
+      return;
+    }
+    onReorder(sourceIndex, targetIndex);
+    setDraggingIndex(null);
+  };
+  const endDrag = () => setDraggingIndex(null);
+  return { draggingIndex, startDrag, dragOver, dropAt, endDrag };
+}
+
 function KnowledgePage({ config }) {
   const DEFAULT_GROUPS = ["核心文献", "综述文献", "高被引", "拓展阅读", "导入文献"];
   const [grp, setGrp] = useState("全部");const [sel, setSel] = useState(null);const [sum, setSum] = useState("");const [sL, setSL] = useState(false);
   const [papers, setPapers] = useState(PAPERS);
   const [newPaper, setNewPaper] = useState(false);
   const [groupInput, setGroupInput] = useState("");
-  const [customGroups, setCustomGroups] = useState(() => {
-    try {
-      return JSON.parse(localStorage.getItem("sciflow.customGroups") || "[]");
-    } catch {
-      return [];
-    }
-  });
+  const [customGroups, setCustomGroups] = useState([]);
   const [np, setNp] = useState({ title: "", authors: "", journal: "", year: 2024, tags: "", group: "核心文献" });
   const importRef = useRef(null);
 
-  useEffect(() => { localStorage.setItem("sciflow.customGroups", JSON.stringify(customGroups)); }, [customGroups]);
+  useEffect(() => {
+    (async () => {
+      const [paperData, groupState] = await Promise.all([getPapers(), getUIState("knowledge_groups")]);
+      if (paperData) {
+        setPapers(paperData);
+      } else {
+        await savePapers(PAPERS.map((p, i) => ({ ...p, id: i + 1 })));
+      }
+      if (groupState?.groups?.length) setCustomGroups(groupState.groups);
+    })();
+  }, []);
 
-  useEffect(() => { getPapers().then(d => { if (d) setPapers(d); else savePapers(PAPERS.map((p,i) => ({...p, id: i+1}))); }); }, []);
+  useEffect(() => {
+    saveUIState("knowledge_groups", { groups: customGroups });
+  }, [customGroups]);
 
   const handleAddPaper = async () => {
     if (!np.title.trim()) return;
@@ -761,7 +796,17 @@ function KnowledgePage({ config }) {
   };
 
   const groupNames = [...new Set([...DEFAULT_GROUPS, ...customGroups, ...papers.map(p => p.group).filter(Boolean)])];
-  const groups = [{ name: "全部", count: papers.length }, ...groupNames.map(g => ({ name: g, count: papers.filter(p => p.group === g).length }))];
+  const groups = [{ name: "全部", count: papers.length }, ...groupNames.map((g, index) => ({ name: g, index, count: papers.filter(p => p.group === g).length }))];
+  const draggableGroups = groupNames.map((name) => ({ name, draggable: !DEFAULT_GROUPS.includes(name) }));
+  const customGroupDrag = useDragReorder((fromIndex, toIndex) => {
+    const source = draggableGroups[fromIndex];
+    const target = draggableGroups[toIndex];
+    if (!source?.draggable || !target?.draggable) return;
+    const fromCustom = customGroups.indexOf(source.name);
+    const toCustom = customGroups.indexOf(target.name);
+    if (fromCustom === -1 || toCustom === -1) return;
+    setCustomGroups((prev) => reorderList(prev, fromCustom, toCustom));
+  });
   const addGroup = () => {
     const name = groupInput.trim();
     if (!name || groupNames.includes(name)) return;
@@ -783,7 +828,10 @@ function KnowledgePage({ config }) {
   return(
     <div className="kb-layout">
       <div className="kb-sidebar fade-in"><div style={{fontSize:10,fontWeight:700,color:'var(--text-muted)',marginBottom:8,textTransform:'uppercase',letterSpacing:1.5}}>文献分组</div>
-        {groups.map(g=><div key={g.name} className={`group-item ${grp===g.name?'active':''}`} onClick={()=>setGrp(g.name)}><Icons.Folder/>{g.name}<span className="group-count">{g.count}</span>{g.name!=="全部"&&!DEFAULT_GROUPS.includes(g.name)&&<button className="btn btn-secondary btn-sm" style={{padding:'2px 6px',marginLeft:6,color:'var(--accent-pink)'}} onClick={(e)=>{e.stopPropagation();deleteGroupByName(g.name);}}>删</button>}</div>)}
+        {groups.map((g) => {
+          const dragIndex = groupNames.indexOf(g.name);
+          return <div key={g.name} className={`group-item ${grp===g.name?'active':''} ${customGroupDrag.draggingIndex===dragIndex?'dragging':''}`} onClick={()=>setGrp(g.name)} draggable={!DEFAULT_GROUPS.includes(g.name)} onDragStart={customGroupDrag.startDrag(dragIndex)} onDragOver={customGroupDrag.dragOver} onDrop={customGroupDrag.dropAt(dragIndex)} onDragEnd={customGroupDrag.endDrag}><span className="drag-handle" title="拖拽排序">⋮⋮</span><Icons.Folder/>{g.name}<span className="group-count">{g.count}</span>{g.name!=="全部"&&!DEFAULT_GROUPS.includes(g.name)&&<button className="btn btn-secondary btn-sm" style={{padding:'2px 6px',marginLeft:6,color:'var(--accent-pink)'}} onClick={(e)=>{e.stopPropagation();deleteGroupByName(g.name);}}>删</button>}</div>;
+        })}
         <div style={{display:'flex',gap:6,marginTop:8}}><input className="input-field" placeholder="新增分组" value={groupInput} onChange={e=>setGroupInput(e.target.value)} onKeyDown={e=>e.key==='Enter'&&addGroup()}/><button className="btn btn-secondary btn-sm" onClick={addGroup}><Icons.Plus/></button></div>
         <button className="btn btn-primary btn-sm" style={{marginTop:12,width:'100%'}} onClick={()=>setNewPaper(true)}><Icons.Plus/>添加文献</button>
         <button className="btn btn-secondary btn-sm" style={{marginTop:8,width:'100%'}} onClick={()=>importRef.current?.click()}>导入 RIS/BibTeX</button>
@@ -836,11 +884,23 @@ function WritingPage({ config }) {
 
 尽管已有大量研究，但对其构效关系的理解仍不够深入。`;
   const [text, setText] = useState(defaultText);
-  const [outline, setOutline] = useState([{id:"abstract",label:"摘要"},{id:"intro",label:"1. 引言"},{id:"intro-bg",label:"1.1 背景",sub:true},{id:"methods",label:"2. 实验方法"},{id:"results",label:"3. 结果讨论"},{id:"conclusion",label:"4. 结论"}]);
+  const defaultOutline = [{id:"abstract",label:"摘要"},{id:"intro",label:"1. 引言"},{id:"intro-bg",label:"1.1 背景",sub:true},{id:"methods",label:"2. 实验方法"},{id:"results",label:"3. 结果讨论"},{id:"conclusion",label:"4. 结论"}];
+  const [outline, setOutline] = useState(defaultOutline);
   const [newSectionName, setNewSectionName] = useState("");
 
-  useEffect(() => { getDrafts().then(d => { const found = d.find(x => x.id === sec); if (found) setText(found.content); }); }, [sec]);
+  useEffect(() => {
+    (async () => {
+      const [drafts, outlineState] = await Promise.all([getDrafts(), getUIState("writing_outline")]);
+      const found = drafts.find(x => x.id === sec);
+      if (found) setText(found.content);
+      if (outlineState?.items?.length) setOutline(outlineState.items);
+    })();
+  }, [sec]);
   const saveText = useCallback((val) => { setText(val); saveDraft({ id: sec, content: val, updatedAt: Date.now() }); }, [sec]);
+  useEffect(() => {
+    saveUIState("writing_outline", { items: outline });
+  }, [outline]);
+  const outlineDrag = useDragReorder((fromIndex, toIndex) => setOutline(prev => reorderList(prev, fromIndex, toIndex)));
   const [sug, setSug] = useState([]);const [aL, setAL] = useState(false);const [aq, setAq] = useState("");
   const analyze=async()=>{setAL(true);setSug([]);const r=await callAIJSON(config,'学术写作教授。分析论文段落。返回JSON:{"suggestions":[{"type":"观点检查|逻辑分析|语言润色|引用建议","content":"...","priority":"high|medium|low"}]}。3-4条。',`引言:
 ${text}`,800);setAL(false);if(r?.suggestions)setSug(r.suggestions);};
@@ -867,7 +927,7 @@ ${text}
   const currentSectionLabel = outline.find(o => o.id === sec)?.label || "正文";
   return(
     <div className="writing-layout">
-      <div className="writing-outline fade-in"><div style={{fontSize:10,fontWeight:700,color:'var(--text-muted)',marginBottom:8,textTransform:'uppercase',letterSpacing:1.5}}>大纲</div>{outline.map(o=><div key={o.id} className={`outline-item ${o.sub?'outline-sub':''} ${sec===o.id?'active':''}`} onClick={()=>setSec(o.id)}>{!o.sub&&<Icons.ChevronRight/>}<span style={{flex:1}}>{o.label}</span><button className="btn btn-secondary btn-sm" style={{padding:'1px 6px'}} onClick={(e)=>{e.stopPropagation();deleteSection(o.id);}}>删</button></div>)}<div style={{display:'flex',gap:6,marginTop:8}}><input className="input-field" placeholder="新增章节" value={newSectionName} onChange={e=>setNewSectionName(e.target.value)} onKeyDown={e=>e.key==='Enter'&&addSection()}/><button className="btn btn-secondary btn-sm" onClick={addSection}><Icons.Plus/></button></div></div>
+      <div className="writing-outline fade-in"><div style={{fontSize:10,fontWeight:700,color:'var(--text-muted)',marginBottom:8,textTransform:'uppercase',letterSpacing:1.5}}>大纲</div>{outline.map((o,index)=><div key={o.id} className={`outline-item ${o.sub?'outline-sub':''} ${sec===o.id?'active':''} ${outlineDrag.draggingIndex===index?'dragging':''}`} onClick={()=>setSec(o.id)} draggable onDragStart={outlineDrag.startDrag(index)} onDragOver={outlineDrag.dragOver} onDrop={outlineDrag.dropAt(index)} onDragEnd={outlineDrag.endDrag}><span className="drag-handle" title="拖拽排序">⋮⋮</span>{!o.sub&&<Icons.ChevronRight/>}<span style={{flex:1}}>{o.label}</span><button className="btn btn-secondary btn-sm" style={{padding:'1px 6px'}} onClick={(e)=>{e.stopPropagation();deleteSection(o.id);}}>删</button></div>)}<div style={{display:'flex',gap:6,marginTop:8}}><input className="input-field" placeholder="新增章节" value={newSectionName} onChange={e=>setNewSectionName(e.target.value)} onKeyDown={e=>e.key==='Enter'&&addSection()}/><button className="btn btn-secondary btn-sm" onClick={addSection}><Icons.Plus/></button></div></div>
       <div className="writing-editor fade-in delay-1"><div className="editor-toolbar">{"B,I,H2,引用".split(',').map(b=><button key={b} className="tool-btn">{b}</button>)}<div style={{marginLeft:'auto'}}><button className="tool-btn ai-tool" onClick={analyze} disabled={aL}><Icons.Sparkle/>AI 分析</button></div></div><div style={{flex:1,padding:'20px',overflow:'auto'}}><input className="input-field" value={currentSectionLabel} onChange={e=>updateSectionLabel(sec,e.target.value)} style={{fontFamily:'var(--font-serif)',fontSize:20,fontWeight:700,marginBottom:14,maxWidth:360}}/><textarea className="editor-textarea" value={text} onChange={e=>saveText(e.target.value)} style={{minHeight:260}}/></div></div>
       <div className="writing-ai-panel fade-in delay-2"><div className="ai-panel-header"><Icons.Sparkle/>AI 写作助手<AIBadge/></div><div className="ai-panel-body">
         {sug.length===0&&!aL&&<div style={{textAlign:'center',padding:'32px 16px',color:'var(--text-muted)',fontSize:13}}><div style={{fontSize:28,marginBottom:10,opacity:.4}}>✨</div>点击「AI 分析」获取建议</div>}
