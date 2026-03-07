@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback, createContext, useContext } from "react";
-import { saveConfig, loadConfig, getPapers, savePapers, addPaper, deletePaper, getLogs, saveLogs, addLog, getChecklist, saveChecklist, getChatHistory, saveChatMessage, clearChatHistory, getSynonymGroups, saveSynonymGroup, deleteSynonymGroup, getClips, addClip, getDrafts, saveDraft, getUIState, saveUIState } from "./db.js";
+import { saveConfig, loadConfig, getPapers, savePapers, addPaper, deletePaper, getLogs, saveLogs, addLog, getChecklist, saveChecklist, getChatHistory, saveChatMessage, clearChatHistory, getSynonymGroups, saveSynonymGroup, deleteSynonymGroup, getClips, addClip, getDrafts, saveDraft, getUIState, saveUIState, initializeDatabase, exportDatabaseSnapshot, importDatabaseSnapshot } from "./db.js";
 
 // ═══════════════════════════════════════════════════════════
 // SCIFLOW — AI-POWERED RESEARCH ASSISTANT
@@ -1048,6 +1048,8 @@ export default function SciFlowApp() {
   const [topics, setTopics] = useState(DEFAULT_TOPICS);
   const [topicName, setTopicName] = useState("");
   const [activeTopicId, setActiveTopicId] = useState(DEFAULT_TOPICS[0].id);
+  const [dbMessage, setDbMessage] = useState("");
+  const dbImportRef = useRef(null);
 
   // Persist AI config to localStorage whenever it changes
   useEffect(() => { saveConfig(config); }, [config]);
@@ -1117,6 +1119,43 @@ export default function SciFlowApp() {
   };
   const topicDrag = useDragReorder((fromIndex, toIndex) => setTopics(prev => reorderList(prev, fromIndex, toIndex)));
 
+  const handleCreateDatabase = async () => {
+    try {
+      await initializeDatabase();
+      const snapshot = await exportDatabaseSnapshot();
+      const blob = new Blob([JSON.stringify(snapshot, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `sciflow-db-${new Date().toISOString().slice(0, 10)}.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      setDbMessage("数据库已建立并导出备份文件。下次可通过“加载数据库”恢复。");
+    } catch (error) {
+      console.error(error);
+      setDbMessage("数据库建立失败，请重试。");
+    }
+  };
+
+  const handleImportDatabase = async (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    try {
+      const text = await file.text();
+      const snapshot = JSON.parse(text);
+      await importDatabaseSnapshot(snapshot);
+      setDbMessage("数据库已加载完成，页面即将刷新。");
+      setTimeout(() => window.location.reload(), 700);
+    } catch (error) {
+      console.error(error);
+      setDbMessage("加载数据库失败：文件格式错误或数据不完整。");
+    } finally {
+      event.target.value = "";
+    }
+  };
+
   return (
     <AIConfigContext.Provider value={config}>
       <style>{CSS}</style>
@@ -1161,6 +1200,9 @@ export default function SciFlowApp() {
             <button className="mobile-menu-btn" onClick={() => setSidebarOpen(true)}><Icons.Menu /></button>
             <div className="breadcrumb"><span style={{ cursor: 'pointer' }} onClick={() => setActiveModule('home')}>SciFlow</span><Icons.ChevronRight /><span className="breadcrumb-current">{title}</span></div>
             <div className="topbar-actions">
+              <button className="btn btn-secondary btn-sm" onClick={handleCreateDatabase}>建立数据库</button>
+              <button className="btn btn-primary btn-sm" onClick={() => dbImportRef.current?.click()}>加载数据库</button>
+              <input ref={dbImportRef} type="file" accept="application/json" style={{ display: "none" }} onChange={handleImportDatabase} />
               <div style={{ fontSize: 12, color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: 6 }}>
                 <span style={{ fontSize: 16 }}>{provInfo?.icon}</span>
                 <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--ai-glow)' }}>{config.customModel || config.model}</span>
@@ -1168,6 +1210,7 @@ export default function SciFlowApp() {
               <div className="topbar-search"><Icons.Search /><input placeholder="全局搜索..." /></div>
             </div>
           </div>
+          {dbMessage && <div style={{margin:'8px 24px 0',fontSize:12,color:'var(--accent-green)'}}>{dbMessage}</div>}
           <div className="page-content" key={activeModule}>{render()}</div>
         </main>
       </div>
