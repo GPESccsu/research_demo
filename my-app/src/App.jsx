@@ -943,15 +943,27 @@ function ReadingPage(){
   const [clipText, setClipText] = useState('');
   const [msg, setMsg] = useState('');
   const [clips, setClips] = useState([{f:"前言素材",c:23,i:"📝"},{f:"实验方法",c:15,i:"🧪"},{f:"结果讨论",c:31,i:"📊"},{f:"图片素材",c:42,i:"🖼"}]);
+
+  useEffect(() => {
+    (async () => {
+      const savedClips = await getClips();
+      if (savedClips?.length) {
+        setClips(savedClips.map(({ f, c, i }) => ({ f, c, i })));
+      }
+    })();
+  }, []);
+
   const importPdf = (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
     setPdfName(file.name);
     setMsg('已加载 PDF 文件（当前版本提供手动摘录，自动结构化提取后续接入）。');
   };
-  const addManualClip = () => {
+  const addManualClip = async () => {
     if (!clipText.trim()) return;
-    setClips(prev => [{f:'手动摘录', c:clipText.length, i:'✂️'}, ...prev]);
+    const clip = {f:'手动摘录', c:clipText.length, i:'✂️'};
+    const id = await addClip(clip);
+    setClips(prev => [{...clip, id}, ...prev]);
     setClipText('');
     setMsg('素材已加入素材库。');
   };
@@ -1051,6 +1063,11 @@ export default function SciFlowApp() {
           setActiveTopicId(topicState.topics[0].id);
         }
       }
+
+      const navState = await getUIState("navigation_state");
+      if (navState?.activeModule) {
+        setActiveModule(navState.activeModule);
+      }
     })();
   }, []);
 
@@ -1058,6 +1075,10 @@ export default function SciFlowApp() {
     if (!topics.length) return;
     saveUIState("topics_state", { topics, activeTopicId });
   }, [topics, activeTopicId]);
+
+  useEffect(() => {
+    saveUIState("navigation_state", { activeModule });
+  }, [activeModule]);
 
   const mod = MODULES.find(m => m.id === activeModule);
   const title = activeModule === "home" ? "概览" : activeModule === "settings" ? "AI 配置" : mod?.label || "";
