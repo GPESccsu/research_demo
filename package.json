@@ -1,0 +1,10 @@
+{
+  "name": "research_demo",
+  "private": true,
+  "scripts": {
+    "dev": "npm --prefix my-app run dev",
+    "build": "npm --prefix my-app run build",
+    "preview": "npm --prefix my-app run preview",
+    "lint": "npm --prefix my-app run lint"
+  }
+}
