@@ -149,6 +149,16 @@ function loadConfig(defaultConfig) {
   return defaultConfig;
 }
 
+function loadRawConfig() {
+  try {
+    const raw = localStorage.getItem(CONFIG_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch (e) {
+    console.warn("Failed to load raw config:", e);
+    return null;
+  }
+}
+
 // ── High-level data API ──
 
 // Papers
@@ -256,6 +266,45 @@ export async function saveSynonymGroup(group) {
 
 export async function deleteSynonymGroup(id) {
   await dbDelete("synonymGroups", id);
+}
+
+// Database lifecycle and backup
+export async function initializeDatabase() {
+  await openDB();
+}
+
+export async function exportDatabaseSnapshot() {
+  const stores = {};
+  for (const storeName of Object.keys(STORES)) {
+    stores[storeName] = await dbGetAll(storeName);
+  }
+  return {
+    meta: {
+      dbName: DB_NAME,
+      exportedAt: new Date().toISOString(),
+      version: DB_VERSION,
+    },
+    config: loadRawConfig(),
+    stores,
+  };
+}
+
+export async function importDatabaseSnapshot(snapshot) {
+  if (!snapshot || !snapshot.stores || typeof snapshot.stores !== "object") {
+    throw new Error("数据库文件格式无效");
+  }
+
+  for (const storeName of Object.keys(STORES)) {
+    await dbClear(storeName);
+    const items = Array.isArray(snapshot.stores[storeName]) ? snapshot.stores[storeName] : [];
+    if (items.length) {
+      await dbBulkPut(storeName, items);
+    }
+  }
+
+  if (snapshot.config) {
+    saveConfig(snapshot.config);
+  }
 }
 
 // Export everything
