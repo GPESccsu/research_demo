@@ -18,6 +18,35 @@ const STORES = {
   uiState: { keyPath: "id" },
 };
 
+function normalizePaper(item) {
+  if (!item || typeof item !== "object") return null;
+
+  return {
+    ...item,
+    title: typeof item.title === "string" ? item.title : "",
+    authors: typeof item.authors === "string" ? item.authors : "",
+    journal: typeof item.journal === "string" ? item.journal : "",
+    year: Number.isFinite(Number(item.year)) ? Number(item.year) : new Date().getFullYear(),
+    tags: Array.isArray(item.tags)
+      ? item.tags.filter((tag) => typeof tag === "string" && tag.trim())
+      : typeof item.tags === "string"
+      ? item.tags.split(",").map((tag) => tag.trim()).filter(Boolean)
+      : [],
+    group: typeof item.group === "string" && item.group.trim() ? item.group : "导入文献",
+    cited: Number.isFinite(Number(item.cited)) ? Number(item.cited) : 0,
+  };
+}
+
+function normalizeStoreItems(storeName, items) {
+  if (!Array.isArray(items)) return [];
+
+  if (storeName === "papers") {
+    return items.map(normalizePaper).filter(Boolean);
+  }
+
+  return items.filter((item) => item && typeof item === "object");
+}
+
 function openDB() {
   return new Promise((resolve, reject) => {
     const req = indexedDB.open(DB_NAME, DB_VERSION);
@@ -163,20 +192,20 @@ function loadRawConfig() {
 
 // Papers
 export async function getPapers() {
-  const papers = await dbGetAll("papers");
+  const papers = normalizeStoreItems("papers", await dbGetAll("papers"));
   return papers.length > 0 ? papers : null;
 }
 
 export async function savePapers(papers) {
-  await dbBulkPut("papers", papers);
+  await dbBulkPut("papers", normalizeStoreItems("papers", papers));
 }
 
 export async function addPaper(paper) {
-  return await dbAdd("papers", paper);
+  return await dbAdd("papers", normalizePaper(paper));
 }
 
 export async function updatePaper(paper) {
-  await dbPut("papers", paper);
+  await dbPut("papers", normalizePaper(paper));
 }
 
 export async function deletePaper(id) {
@@ -296,7 +325,7 @@ export async function importDatabaseSnapshot(snapshot) {
 
   for (const storeName of Object.keys(STORES)) {
     await dbClear(storeName);
-    const items = Array.isArray(snapshot.stores[storeName]) ? snapshot.stores[storeName] : [];
+    const items = normalizeStoreItems(storeName, snapshot.stores[storeName]);
     if (items.length) {
       await dbBulkPut(storeName, items);
     }
