@@ -627,6 +627,7 @@ function SettingsPage({ config, setConfig }) {
 function DashboardPage({ setActiveModule, config, currentTopic }) {
   const prov = AI_PROVIDERS[config.provider];
   const [stats, setStats] = useState({papers:0,clips:0,chats:0,checkPct:0,checkRemain:0});
+  const [recentPapers, setRecentPapers] = useState(PAPERS.slice(0, 3));
   useEffect(()=>{
     Promise.all([getPapers(), getClips(), getChatHistory(), getChecklist()]).then(([papers, clips, chats, ck])=>{
       const p = papers?.length || PAPERS.length;
@@ -636,6 +637,12 @@ function DashboardPage({ setActiveModule, config, currentTopic }) {
       const td = ckData.reduce((s,c)=>s+c.items.filter(i=>i.done).length,0);
       const tt = ckData.reduce((s,c)=>s+c.items.length,0);
       setStats({papers:p, clips:cl, chats:ch, checkPct:tt?Math.round(td/tt*100):0, checkRemain:tt-td});
+      if (papers?.length) {
+        const sorted = [...papers].sort((a, b) => (b.id || 0) - (a.id || 0));
+        setRecentPapers(sorted.slice(0, 3));
+      } else {
+        setRecentPapers(PAPERS.slice(0, 3));
+      }
     });
   }, []);
   return (
@@ -658,7 +665,7 @@ function DashboardPage({ setActiveModule, config, currentTopic }) {
         </div>
       ))}</div>
       <div className="section-header"><div className="section-title">最近文献</div><div className="section-action" onClick={()=>setActiveModule("knowledge")}>查看全部 <Icons.ArrowRight/></div></div>
-      <div style={{display:'flex',flexDirection:'column',gap:8}}>{PAPERS.slice(0,3).map((p,i)=>(
+      <div style={{display:'flex',flexDirection:'column',gap:8}}>{recentPapers.map((p,i)=>(
         <div key={p.id} className={`paper-card fade-in delay-${i+1}`}><div className="paper-title">{p.title}</div><div className="paper-meta"><span className="paper-journal">{p.journal}</span><span>{p.authors}</span><span>{p.year}</span><span style={{color:'var(--accent-amber)'}}>✦ {p.cited}</span></div><div className="paper-tags">{p.tags.map(t=><span key={t} className="paper-tag">{t}</span>)}</div></div>
       ))}</div>
     </div>
