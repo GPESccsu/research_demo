@@ -255,7 +255,7 @@ const CK_DATA = [
 ];
 
 const DEFAULT_TOPICS = [
-  { id: 1, name: "锌空气电池催化剂研究", status: "进行中" },
+  { id: "1", name: "锌空气电池催化剂研究", status: "进行中" },
 ];
 
 function parseRIS(content) {
@@ -748,28 +748,34 @@ function KnowledgePage({ config }) {
   const [newPaper, setNewPaper] = useState(false);
   const [groupInput, setGroupInput] = useState("");
   const [groupOrder, setGroupOrder] = useState(DEFAULT_GROUPS);
+  const [groupsReady, setGroupsReady] = useState(false);
   const [np, setNp] = useState({ title: "", authors: "", journal: "", year: 2024, tags: "", group: "核心文献" });
   const importRef = useRef(null);
 
   useEffect(() => {
     (async () => {
-      const [paperData, groupState] = await Promise.all([getPapers(), getUIState("knowledge_groups")]);
-      if (paperData) {
-        setPapers(paperData);
-      } else {
-        await savePapers(PAPERS.map((p, i) => ({ ...p, id: i + 1 })));
-      }
-      if (groupState?.order?.length) {
-        setGroupOrder(groupState.order);
-      } else if (groupState?.groups?.length) {
-        setGroupOrder([...DEFAULT_GROUPS, ...groupState.groups.filter((g) => !DEFAULT_GROUPS.includes(g))]);
+      try {
+        const [paperData, groupState] = await Promise.all([getPapers(), getUIState("knowledge_groups")]);
+        if (paperData) {
+          setPapers(paperData);
+        } else {
+          await savePapers(PAPERS.map((p, i) => ({ ...p, id: i + 1 })));
+        }
+        if (groupState?.order?.length) {
+          setGroupOrder(groupState.order);
+        } else if (groupState?.groups?.length) {
+          setGroupOrder([...DEFAULT_GROUPS, ...groupState.groups.filter((g) => !DEFAULT_GROUPS.includes(g))]);
+        }
+      } finally {
+        setGroupsReady(true);
       }
     })();
   }, []);
 
   useEffect(() => {
+    if (!groupsReady) return;
     saveUIState("knowledge_groups", { order: groupOrder });
-  }, [groupOrder]);
+  }, [groupOrder, groupsReady]);
 
   const handleAddPaper = async () => {
     if (!np.title.trim()) return;
@@ -894,20 +900,26 @@ function WritingPage({ config }) {
   const [text, setText] = useState(defaultText);
   const defaultOutline = [{id:"abstract",label:"摘要"},{id:"intro",label:"1. 引言"},{id:"intro-bg",label:"1.1 背景",sub:true},{id:"methods",label:"2. 实验方法"},{id:"results",label:"3. 结果讨论"},{id:"conclusion",label:"4. 结论"}];
   const [outline, setOutline] = useState(defaultOutline);
+  const [outlineReady, setOutlineReady] = useState(false);
   const [newSectionName, setNewSectionName] = useState("");
 
   useEffect(() => {
     (async () => {
-      const [drafts, outlineState] = await Promise.all([getDrafts(), getUIState("writing_outline")]);
-      const found = drafts.find(x => x.id === sec);
-      if (found) setText(found.content);
-      if (outlineState?.items?.length) setOutline(outlineState.items);
+      try {
+        const [drafts, outlineState] = await Promise.all([getDrafts(), getUIState("writing_outline")]);
+        const found = drafts.find(x => x.id === sec);
+        if (found) setText(found.content);
+        if (outlineState?.items?.length) setOutline(outlineState.items);
+      } finally {
+        setOutlineReady(true);
+      }
     })();
   }, [sec]);
   const saveText = useCallback((val) => { setText(val); saveDraft({ id: sec, content: val, updatedAt: Date.now() }); }, [sec]);
   useEffect(() => {
+    if (!outlineReady) return;
     saveUIState("writing_outline", { items: outline });
-  }, [outline]);
+  }, [outline, outlineReady]);
   const outlineDrag = useDragReorder((fromIndex, toIndex) => setOutline(prev => reorderList(prev, fromIndex, toIndex)));
   const [sug, setSug] = useState([]);const [aL, setAL] = useState(false);const [aq, setAq] = useState("");
   const analyze=async()=>{setAL(true);setSug([]);const r=await callAIJSON(config,'学术写作教授。分析论文段落。返回JSON:{"suggestions":[{"type":"观点检查|逻辑分析|语言润色|引用建议","content":"...","priority":"high|medium|low"}]}。3-4条。',`引言:
@@ -1056,6 +1068,7 @@ export default function SciFlowApp() {
   const [topicName, setTopicName] = useState("");
   const [activeTopicId, setActiveTopicId] = useState(DEFAULT_TOPICS[0].id);
   const [dbMessage, setDbMessage] = useState("");
+  const [uiStateReady, setUiStateReady] = useState(false);
   const dbImportRef = useRef(null);
 
   // Persist AI config to localStorage whenever it changes
@@ -1063,31 +1076,42 @@ export default function SciFlowApp() {
 
   useEffect(() => {
     (async () => {
-      const topicState = await getUIState("topics_state");
-      if (topicState?.topics?.length) {
-        setTopics(topicState.topics);
-        if (topicState.activeTopicId && topicState.topics.find((t) => t.id === topicState.activeTopicId)) {
-          setActiveTopicId(topicState.activeTopicId);
-        } else {
-          setActiveTopicId(topicState.topics[0].id);
-        }
-      }
+      try {
+        const topicState = await getUIState("topics_state");
+        if (topicState?.topics?.length) {
+          const normalizedTopics = topicState.topics.map((topic) => ({
+            ...topic,
+            id: String(topic.id),
+          }));
+          const normalizedActiveTopicId = String(topicState.activeTopicId ?? "");
 
-      const navState = await getUIState("navigation_state");
-      if (navState?.activeModule) {
-        setActiveModule(navState.activeModule);
+          setTopics(normalizedTopics);
+          if (normalizedActiveTopicId && normalizedTopics.find((t) => t.id === normalizedActiveTopicId)) {
+            setActiveTopicId(normalizedActiveTopicId);
+          } else {
+            setActiveTopicId(normalizedTopics[0].id);
+          }
+        }
+
+        const navState = await getUIState("navigation_state");
+        if (navState?.activeModule) {
+          setActiveModule(navState.activeModule);
+        }
+      } finally {
+        setUiStateReady(true);
       }
     })();
   }, []);
 
   useEffect(() => {
-    if (!topics.length) return;
+    if (!uiStateReady || !topics.length) return;
     saveUIState("topics_state", { topics, activeTopicId });
-  }, [topics, activeTopicId]);
+  }, [topics, activeTopicId, uiStateReady]);
 
   useEffect(() => {
+    if (!uiStateReady) return;
     saveUIState("navigation_state", { activeModule });
-  }, [activeModule]);
+  }, [activeModule, uiStateReady]);
 
   const mod = MODULES.find(m => m.id === activeModule);
   const title = activeModule === "home" ? "概览" : activeModule === "settings" ? "AI 配置" : mod?.label || "";
@@ -1111,7 +1135,7 @@ export default function SciFlowApp() {
   const currentTopic = topics.find(t => t.id === activeTopicId) || topics[0];
   const addTopic = () => {
     if (!topicName.trim()) return;
-    const t = { id: Date.now(), name: topicName.trim(), status: "进行中" };
+    const t = { id: String(Date.now()), name: topicName.trim(), status: "进行中" };
     setTopics(prev => [...prev, t]);
     setActiveTopicId(t.id);
     setTopicName("");
@@ -1139,10 +1163,10 @@ export default function SciFlowApp() {
       a.click();
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
-      setDbMessage("数据库已建立并导出备份文件。下次可通过“加载数据库”恢复。");
+      setDbMessage("数据库已保存并导出 JSON 备份文件。下次可通过“加载数据库”恢复。");
     } catch (error) {
       console.error(error);
-      setDbMessage("数据库建立失败，请重试。");
+      setDbMessage("数据库保存失败，请重试。");
     }
   };
 
@@ -1173,7 +1197,7 @@ export default function SciFlowApp() {
             <div className="sidebar-logo"><div className="logo-mark">SF</div><span className="logo-text">SciFlow</span></div>
             <div style={{display:'flex',flexDirection:'column',gap:8}}>
               <div className="project-selector"><span className="project-name">{currentTopic?.name}</span><span className="project-tag">{currentTopic?.status}</span></div>
-              <select className="input-field" value={activeTopicId} onChange={e=>setActiveTopicId(Number(e.target.value))}>{topics.map(t=><option key={t.id} value={t.id}>{t.name}</option>)}</select>
+              <select className="input-field" value={activeTopicId} onChange={e=>setActiveTopicId(e.target.value)}>{topics.map(t=><option key={t.id} value={t.id}>{t.name}</option>)}</select>
               <div style={{display:'flex',flexDirection:'column',gap:6,maxHeight:140,overflowY:'auto'}}>
                 {topics.map((t, index)=><div key={t.id} className={`group-item ${activeTopicId===t.id?'active':''} ${topicDrag.draggingIndex===index?'dragging':''}`} style={{marginBottom:0}} onClick={()=>setActiveTopicId(t.id)} draggable onDragStart={topicDrag.startDrag(index)} onDragOver={topicDrag.dragOver} onDrop={topicDrag.dropAt(index)} onDragEnd={topicDrag.endDrag}><span className="drag-handle" title="拖拽排序">⋮⋮</span><span style={{flex:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{t.name}</span><button className="btn btn-secondary btn-sm" style={{padding:'2px 8px',color:'var(--accent-pink)'}} onClick={(e)=>{e.stopPropagation();deleteTopic(t.id);}} disabled={topics.length<=1}>删</button></div>)}
               </div>
@@ -1207,7 +1231,7 @@ export default function SciFlowApp() {
             <button className="mobile-menu-btn" onClick={() => setSidebarOpen(true)}><Icons.Menu /></button>
             <div className="breadcrumb"><span style={{ cursor: 'pointer' }} onClick={() => setActiveModule('home')}>SciFlow</span><Icons.ChevronRight /><span className="breadcrumb-current">{title}</span></div>
             <div className="topbar-actions">
-              <button className="btn btn-secondary btn-sm" onClick={handleCreateDatabase}>建立数据库</button>
+              <button className="btn btn-secondary btn-sm" onClick={handleCreateDatabase}>保存数据库</button>
               <button className="btn btn-primary btn-sm" onClick={() => dbImportRef.current?.click()}>加载数据库</button>
               <input ref={dbImportRef} type="file" accept="application/json" style={{ display: "none" }} onChange={handleImportDatabase} />
               <div style={{ fontSize: 12, color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: 6 }}>
