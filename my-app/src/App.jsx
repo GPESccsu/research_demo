@@ -394,7 +394,7 @@ const CSS = `
 .paper-card{background:var(--bg-surface);border:1px solid var(--border);border-radius:var(--radius-md);padding:16px 18px;cursor:pointer;transition:all .15s}.paper-card:hover{border-color:var(--border-bright);background:var(--bg-elevated)}
 .paper-title{font-size:14px;font-weight:600;margin-bottom:5px;line-height:1.4}.paper-meta{font-size:12px;color:var(--text-muted);margin-bottom:7px;display:flex;align-items:center;gap:10px;flex-wrap:wrap}.paper-journal{color:var(--accent-blue);font-weight:500}
 .paper-tags{display:flex;gap:5px;flex-wrap:wrap}.paper-tag{font-size:11px;padding:2px 8px;border-radius:4px;background:var(--bg-deep);color:var(--text-secondary);border:1px solid var(--border)}
-.topic-layout{display:grid;grid-template-columns:1fr 1fr;gap:16px}@media(max-width:960px){.topic-layout{grid-template-columns:1fr}}
+.topic-layout{display:grid;grid-template-columns:1fr 1fr;gap:16px;min-width:0}.topic-layout>*{min-width:0}@media(max-width:960px){.topic-layout{grid-template-columns:1fr}}
 .keyword-chips{display:flex;flex-wrap:wrap;gap:7px}.keyword-chip{display:flex;align-items:center;gap:6px;padding:6px 12px;border-radius:20px;font-size:12px;border:1px solid}.chip-synonym{background:rgba(232,168,56,.1);border-color:rgba(232,168,56,.3);color:var(--accent-amber)}.chip-related{background:rgba(91,164,230,.1);border-color:rgba(91,164,230,.3);color:var(--accent-blue)}.chip-cross{background:rgba(155,127,212,.1);border-color:rgba(155,127,212,.3);color:var(--accent-purple)}.chip-ai{background:rgba(167,139,250,.1);border-color:rgba(167,139,250,.3);color:var(--ai-glow)}.chip-freq{font-family:var(--font-mono);font-size:10px;opacity:.7}
 .search-formula{background:var(--bg-deep);border:1px solid var(--border);border-radius:var(--radius-sm);padding:14px;font-family:var(--font-mono);font-size:12px;line-height:1.8;color:var(--text-secondary);margin-bottom:12px;word-break:break-all}.formula-op{color:var(--accent-amber);font-weight:600}.formula-term{color:var(--accent-blue)}
 .db-results{display:flex;gap:10px;flex-wrap:wrap}.db-badge{padding:6px 12px;border-radius:var(--radius-sm);font-size:12px;background:var(--bg-elevated);border:1px solid var(--border);display:flex;align-items:center;gap:6px}.db-count{font-family:var(--font-mono);font-weight:600;color:var(--accent-green)}
@@ -752,13 +752,13 @@ function TopicPage({ config }) {
           <div style={{marginTop:16}}>
             <div style={{fontSize:12,color:'var(--text-muted)',marginBottom:8}}>已保存的检索式 ({savedQueries.length})</div>
             {savedQueries.map(q => (
-              <div key={q.id} style={{display:'flex',alignItems:'center',gap:8,padding:'8px 10px',marginBottom:6,borderRadius:8,background:'var(--bg-elevated)',border:'1px solid var(--border)',cursor:'pointer',fontSize:13,transition:'background 0.15s'}} onClick={()=>handleLoadQuery(q)} onMouseEnter={e=>e.currentTarget.style.background='var(--bg-secondary)'} onMouseLeave={e=>e.currentTarget.style.background='var(--bg-elevated)'}>
+              <div key={q.id} style={{display:'flex',alignItems:'center',gap:8,padding:'8px 10px',marginBottom:6,borderRadius:8,background:'var(--bg-elevated)',border:'1px solid var(--border)',cursor:'pointer',fontSize:13,transition:'background 0.15s',minWidth:0}} onClick={()=>handleLoadQuery(q)} onMouseEnter={e=>e.currentTarget.style.background='var(--bg-secondary)'} onMouseLeave={e=>e.currentTarget.style.background='var(--bg-elevated)'}>
                 {editingName===q.id ? (
                   <input className="input-field" value={tempName} onChange={e=>setTempName(e.target.value)} onBlur={()=>handleRenameQuery(q.id,tempName)} onKeyDown={e=>{if(e.key==='Enter'){handleRenameQuery(q.id,tempName);}if(e.key==='Escape'){setEditingName(null);}}} onClick={e=>e.stopPropagation()} autoFocus style={{flex:'0 0 auto',width:100,padding:'2px 6px',fontSize:12}}/>
                 ) : (
                   <span style={{fontWeight:600,whiteSpace:'nowrap',color:'var(--accent-amber)',fontSize:12}} onDoubleClick={e=>{e.stopPropagation();setEditingName(q.id);setTempName(q.name);}} title="双击重命名">{q.name}</span>
                 )}
-                <span style={{flex:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',color:'var(--text-secondary)',fontFamily:'var(--font-mono)',fontSize:11}}>{q.query}</span>
+                <span style={{flex:1,minWidth:0,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',color:'var(--text-secondary)',fontFamily:'var(--font-mono)',fontSize:11}}>{q.query}</span>
                 <span style={{fontSize:11,color:'var(--text-muted)',whiteSpace:'nowrap'}}>{new Date(q.createdAt).toLocaleDateString()}</span>
                 <button className="btn btn-sm" style={{color:'var(--text-muted)',padding:'2px 6px',fontSize:14,lineHeight:1,minWidth:'auto'}} onClick={e=>{e.stopPropagation();handleDeleteQuery(q.id);}} title="删除此检索式">&times;</button>
               </div>
