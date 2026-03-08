@@ -872,7 +872,26 @@ function KnowledgePage({ config }) {
 
 function ExperimentPage({ config }) {
   const [di, setDi] = useState("");const [dr, setDr] = useState("");const [dL, setDL] = useState(false);
-  const [nodes, setNodes] = useState([{id:1,level:1,label:"研究意义",text:"开发高效低成本锌空气电池催化剂",color:"var(--accent-amber)"},{id:2,level:1,label:"关键问题",text:"如何提升 Co₃O₄ 的 OER/ORR 双功能性能？",color:"var(--accent-amber)"},{id:3,level:2,label:"子问题 1",text:"形貌调控对催化活性的影响",refs:"Zhang 2024",color:"var(--accent-blue)"},{id:4,level:2,label:"子问题 2",text:"N 掺杂优化电子结构",refs:"Chen 2023",color:"var(--accent-blue)"},{id:5,level:3,label:"实验变量",text:"合成温度、前驱体浓度、N源",color:"var(--accent-green)"},{id:6,level:3,label:"表征",text:"XRD, SEM, TEM, XPS",color:"var(--accent-green)"}]);
+  const defaultNodes = [{id:1,level:1,label:"研究意义",text:"开发高效低成本锌空气电池催化剂",color:"var(--accent-amber)"},{id:2,level:1,label:"关键问题",text:"如何提升 Co₃O₄ 的 OER/ORR 双功能性能？",color:"var(--accent-amber)"},{id:3,level:2,label:"子问题 1",text:"形貌调控对催化活性的影响",refs:"Zhang 2024",color:"var(--accent-blue)"},{id:4,level:2,label:"子问题 2",text:"N 掺杂优化电子结构",refs:"Chen 2023",color:"var(--accent-blue)"},{id:5,level:3,label:"实验变量",text:"合成温度、前驱体浓度、N源",color:"var(--accent-green)"},{id:6,level:3,label:"表征",text:"XRD, SEM, TEM, XPS",color:"var(--accent-green)"}];
+  const [nodes, setNodes] = useState(defaultNodes);
+  const [nodesReady, setNodesReady] = useState(false);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const state = await getUIState("experiment_nodes");
+        if (state?.nodes?.length) setNodes(state.nodes);
+      } finally {
+        setNodesReady(true);
+      }
+    })();
+  }, []);
+
+  useEffect(() => {
+    if (!nodesReady) return;
+    saveUIState("experiment_nodes", { nodes });
+  }, [nodes, nodesReady]);
+
   const diag=async()=>{if(!di.trim())return;setDL(true);setDr("");const r=await callAI(config,'你是材料科学实验导师。分析实验异常:1)2-3个原因 2)排查路径 3)解决建议。中文≤200字。',di,600);setDL(false);setDr(r||"AI不可用");};
   const updateNode = (id, key, value) => setNodes(prev => prev.map(n => n.id===id?{...n,[key]:value}:n));
   const addNode = () => setNodes(prev => [...prev, {id:Date.now(), level:2, label:'新节点', text:'可编辑内容', refs:'', color:'var(--accent-blue)'}]);
@@ -1150,7 +1169,7 @@ export default function SciFlowApp() {
   };
   const topicDrag = useDragReorder((fromIndex, toIndex) => setTopics(prev => reorderList(prev, fromIndex, toIndex)));
 
-  const handleCreateDatabase = async () => {
+  const handleSaveDatabase = async () => {
     try {
       await initializeDatabase();
       const snapshot = await exportDatabaseSnapshot();
@@ -1231,7 +1250,7 @@ export default function SciFlowApp() {
             <button className="mobile-menu-btn" onClick={() => setSidebarOpen(true)}><Icons.Menu /></button>
             <div className="breadcrumb"><span style={{ cursor: 'pointer' }} onClick={() => setActiveModule('home')}>SciFlow</span><Icons.ChevronRight /><span className="breadcrumb-current">{title}</span></div>
             <div className="topbar-actions">
-              <button className="btn btn-secondary btn-sm" onClick={handleCreateDatabase}>保存数据库</button>
+              <button className="btn btn-secondary btn-sm" onClick={handleSaveDatabase}>保存数据库</button>
               <button className="btn btn-primary btn-sm" onClick={() => dbImportRef.current?.click()}>加载数据库</button>
               <input ref={dbImportRef} type="file" accept="application/json" style={{ display: "none" }} onChange={handleImportDatabase} />
               <div style={{ fontSize: 12, color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: 6 }}>
