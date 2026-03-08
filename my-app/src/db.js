@@ -5,7 +5,7 @@
 // ═══════════════════════════════════════════════════════════
 
 const DB_NAME = "sciflow_db";
-const DB_VERSION = 2;
+const DB_VERSION = 3;
 
 const STORES = {
   papers: { keyPath: "id", autoIncrement: true },
@@ -16,6 +16,7 @@ const STORES = {
   writingDrafts: { keyPath: "id", autoIncrement: true },
   chatHistory: { keyPath: "id", autoIncrement: true },
   uiState: { keyPath: "id" },
+  searchQueries: { keyPath: "id", autoIncrement: true },
 };
 
 function normalizePaper(item) {
@@ -295,6 +296,23 @@ export async function saveSynonymGroup(group) {
 
 export async function deleteSynonymGroup(id) {
   await dbDelete("synonymGroups", id);
+}
+
+// Search Queries (检索式)
+export async function getSearchQueries() {
+  return await dbGetAll("searchQueries");
+}
+
+export async function addSearchQuery(query) {
+  return await dbAdd("searchQueries", { ...query, createdAt: Date.now() });
+}
+
+export async function updateSearchQuery(query) {
+  await dbPut("searchQueries", query);
+}
+
+export async function deleteSearchQuery(id) {
+  await dbDelete("searchQueries", id);
 }
 
 // Database lifecycle and backup

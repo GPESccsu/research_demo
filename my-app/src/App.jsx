@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback, createContext, useContext } from "react";
-import { saveConfig, loadConfig, getPapers, savePapers, addPaper, deletePaper, getLogs, saveLogs, addLog, getChecklist, saveChecklist, getChatHistory, saveChatMessage, clearChatHistory, getSynonymGroups, saveSynonymGroup, deleteSynonymGroup, getClips, addClip, getDrafts, saveDraft, getUIState, saveUIState, initializeDatabase, exportDatabaseSnapshot, importDatabaseSnapshot } from "./db.js";
+import { saveConfig, loadConfig, getPapers, savePapers, addPaper, deletePaper, getLogs, saveLogs, addLog, getChecklist, saveChecklist, getChatHistory, saveChatMessage, clearChatHistory, getSynonymGroups, saveSynonymGroup, deleteSynonymGroup, getClips, addClip, getDrafts, saveDraft, getUIState, saveUIState, initializeDatabase, exportDatabaseSnapshot, importDatabaseSnapshot, getSearchQueries, addSearchQuery, updateSearchQuery, deleteSearchQuery } from "./db.js";
 
 // ═══════════════════════════════════════════════════════════
 // SCIFLOW — AI-POWERED RESEARCH ASSISTANT
@@ -678,12 +678,53 @@ function TopicPage({ config }) {
   const [ld, setLd] = useState(false);
   const [searching, setSearching] = useState(false);
   const [searchMsg, setSearchMsg] = useState("");
+  const [currentQuery, setCurrentQuery] = useState("");
+  const [savedQueries, setSavedQueries] = useState([]);
+  const [editingName, setEditingName] = useState(null);
+  const [tempName, setTempName] = useState("");
   const defs = [{word:"zinc-air battery",type:"同义词"},{word:"Zn-air battery",type:"同义词"},{word:"metal-air battery",type:"近义词"},{word:"oxygen reduction reaction",type:"跨学科"},{word:"bifunctional catalyst",type:"相关表达"}];
   const expand = async()=>{if(!kw.trim())return;setLd(true);setAiKw(null);const r=await callAIJSON(config,'你是学术关键词扩展助手。返回纯JSON:{"keywords":[{"word":"...","type":"同义词|近义词|跨学科|相关表达","reason":"..."}]}。8-12个英文关键词。',`扩展:"${kw}"`);setLd(false);if(r?.keywords)setAiKw(r.keywords);};
+
+  const refreshQueries = async () => {
+    const queries = await getSearchQueries();
+    setSavedQueries(queries.sort((a, b) => b.createdAt - a.createdAt));
+  };
+  useEffect(() => { refreshQueries(); }, []);
+
+  const handleSaveQuery = async () => {
+    if (!currentQuery.trim()) return;
+    const maxNum = savedQueries.reduce((max, q) => {
+      const m = q.name.match(/^检索式\s*(\d+)$/);
+      return m ? Math.max(max, Number(m[1])) : max;
+    }, 0);
+    await addSearchQuery({ name: `检索式 ${maxNum + 1}`, query: currentQuery.trim() });
+    await refreshQueries();
+  };
+
+  const handleDeleteQuery = async (id) => {
+    await deleteSearchQuery(id);
+    await refreshQueries();
+  };
+
+  const handleLoadQuery = (q) => {
+    setCurrentQuery(q.query);
+  };
+
+  const handleRenameQuery = async (id, newName) => {
+    if (!newName.trim()) { setEditingName(null); return; }
+    const found = savedQueries.find(q => q.id === id);
+    if (found) {
+      await updateSearchQuery({ ...found, name: newName.trim() });
+      await refreshQueries();
+    }
+    setEditingName(null);
+  };
+
   const runSearch = async () => {
+    const searchText = currentQuery.trim() || kw || "zinc-air battery catalyst";
     setSearching(true);
     setSearchMsg("");
-    const query = encodeURIComponent(kw || "zinc-air battery catalyst");
+    const query = encodeURIComponent(searchText);
     [
       `https://www.scopus.com/results/results.uri?query=${query}`,
       `https://www.webofscience.com/wos/woscc/basic-search?query=${query}`,
@@ -693,6 +734,7 @@ function TopicPage({ config }) {
     setSearching(false);
     setSearchMsg("已在新标签页打开 Scopus / WoS / CNKI 检索页面。");
   };
+
   const kws=aiKw||defs;const cc=t=>t==="同义词"?"chip-synonym":t==="跨学科"?"chip-cross":t==="近义词"?"chip-related":"chip-ai";
   return(
     <div className="topic-layout">
@@ -703,11 +745,26 @@ function TopicPage({ config }) {
         {aiKw&&<div className="ai-summary-panel" style={{marginTop:14}}><div className="ai-summary-header"><Icons.Sparkle/>AI 扩展完成</div><div className="ai-summary-text">已扩展 {aiKw.length} 个学术关键词。</div></div>}
       </div></div></div>
       <div><div className="panel fade-in delay-1"><div className="panel-header"><Icons.Globe/>检索式构建器</div><div className="panel-body">
-        <div className="search-formula">(<span className="formula-term">"zinc-air battery"</span> <span className="formula-op">OR</span> <span className="formula-term">"Zn-air battery"</span>)<br/><span className="formula-op">AND</span><br/>(<span className="formula-term">"catalyst"</span> <span className="formula-op">OR</span> <span className="formula-term">"electrocatalyst"</span>)<br/><span className="formula-op">AND</span><br/>(<span className="formula-term">"oxygen reduction"</span> <span className="formula-op">OR</span> <span className="formula-term">"oxygen evolution"</span>)</div>
-        <div style={{fontSize:12,color:'var(--text-muted)',marginBottom:10}}>预估检索结果：</div>
-        <div className="db-results"><div className="db-badge">Scopus <span className="db-count">2,847</span></div><div className="db-badge">WoS <span className="db-count">2,103</span></div><div className="db-badge">CNKI <span className="db-count">891</span></div></div>
-        <div style={{marginTop:14,display:'flex',gap:8}}><button className="btn btn-primary btn-sm" onClick={runSearch} disabled={searching}>{searching?'检索中...':'执行检索'}</button><button className="btn btn-secondary btn-sm">保存</button></div>
+        <textarea className="input-field" value={currentQuery} onChange={e=>setCurrentQuery(e.target.value)} placeholder={'输入检索式，例如：\nTITLE-ABS-KEY ( ( "能量采集电路" OR "energy harvesting circuit" ) AND ( "汽车悬架" OR "automotive suspension" ) )'} rows={5} style={{width:'100%',fontFamily:'var(--font-mono)',fontSize:12,lineHeight:1.6,resize:'vertical',marginBottom:12}}/>
+        <div style={{display:'flex',gap:8}}><button className="btn btn-primary btn-sm" onClick={runSearch} disabled={searching}>{searching?'检索中...':'执行检索'}</button><button className="btn btn-secondary btn-sm" onClick={handleSaveQuery} disabled={!currentQuery.trim()}>保存检索式</button></div>
         {searchMsg && <div style={{marginTop:10,fontSize:12,color:'var(--accent-green)'}}>{searchMsg}</div>}
+        {savedQueries.length > 0 && (
+          <div style={{marginTop:16}}>
+            <div style={{fontSize:12,color:'var(--text-muted)',marginBottom:8}}>已保存的检索式 ({savedQueries.length})</div>
+            {savedQueries.map(q => (
+              <div key={q.id} style={{display:'flex',alignItems:'center',gap:8,padding:'8px 10px',marginBottom:6,borderRadius:8,background:'var(--bg-elevated)',border:'1px solid var(--border)',cursor:'pointer',fontSize:13,transition:'background 0.15s'}} onClick={()=>handleLoadQuery(q)} onMouseEnter={e=>e.currentTarget.style.background='var(--bg-secondary)'} onMouseLeave={e=>e.currentTarget.style.background='var(--bg-elevated)'}>
+                {editingName===q.id ? (
+                  <input className="input-field" value={tempName} onChange={e=>setTempName(e.target.value)} onBlur={()=>handleRenameQuery(q.id,tempName)} onKeyDown={e=>{if(e.key==='Enter'){handleRenameQuery(q.id,tempName);}if(e.key==='Escape'){setEditingName(null);}}} onClick={e=>e.stopPropagation()} autoFocus style={{flex:'0 0 auto',width:100,padding:'2px 6px',fontSize:12}}/>
+                ) : (
+                  <span style={{fontWeight:600,whiteSpace:'nowrap',color:'var(--accent-amber)',fontSize:12}} onDoubleClick={e=>{e.stopPropagation();setEditingName(q.id);setTempName(q.name);}} title="双击重命名">{q.name}</span>
+                )}
+                <span style={{flex:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',color:'var(--text-secondary)',fontFamily:'var(--font-mono)',fontSize:11}}>{q.query}</span>
+                <span style={{fontSize:11,color:'var(--text-muted)',whiteSpace:'nowrap'}}>{new Date(q.createdAt).toLocaleDateString()}</span>
+                <button className="btn btn-sm" style={{color:'var(--text-muted)',padding:'2px 6px',fontSize:14,lineHeight:1,minWidth:'auto'}} onClick={e=>{e.stopPropagation();handleDeleteQuery(q.id);}} title="删除此检索式">&times;</button>
+              </div>
+            ))}
+          </div>
+        )}
       </div></div></div>
     </div>);
 }
