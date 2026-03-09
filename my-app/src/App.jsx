@@ -1,200 +1,21 @@
-import { useState, useEffect, useRef, useCallback, createContext, useContext } from "react";
+import { useState, useEffect, useRef, createContext, useContext } from "react";
 import { saveConfig, loadConfig, getPapers, savePapers, addPaper, deletePaper, getLogs, saveLogs, addLog, getChecklist, saveChecklist, getChatHistory, saveChatMessage, clearChatHistory, getSynonymGroups, saveSynonymGroup, deleteSynonymGroup, getClips, addClip, getDrafts, saveDraft, getUIState, saveUIState, initializeDatabase, exportDatabaseSnapshot, importDatabaseSnapshot, getSearchQueries, addSearchQuery, updateSearchQuery, deleteSearchQuery } from "./db.js";
+import { AI_PROVIDERS, DEFAULT_CONFIG } from "./services/promptService.js";
+import { callAI, callAIJSON, callAIChat } from "./services/aiService.js";
+import { PROMPTS } from "./prompts/index.js";
+import SettingsPage from "./pages/SettingsPage.jsx";
+import WritingPage from "./pages/WritingPage.jsx";
 
 // ═══════════════════════════════════════════════════════════
 // SCIFLOW — AI-POWERED RESEARCH ASSISTANT
 // With Multi-Provider AI Configuration
 // ═══════════════════════════════════════════════════════════
 
-// ── AI Provider Definitions ──
-const AI_PROVIDERS = {
-  anthropic: {
-    id: "anthropic", name: "Anthropic Claude", icon: "🟣", type: "cloud",
-    description: "Claude 系列模型，强大的学术理解与写作能力",
-    baseUrl: "https://api.anthropic.com/v1/messages",
-    requiresKey: true, keyPlaceholder: "sk-ant-...",
-    models: [
-      { id: "claude-sonnet-4-20250514", name: "Claude Sonnet 4", desc: "均衡性能，推荐日常使用", default: true },
-      { id: "claude-haiku-4-5-20251001", name: "Claude Haiku 4.5", desc: "最快响应，适合简单任务" },
-    ],
-    format: "anthropic",
-  },
-  openai: {
-    id: "openai", name: "OpenAI ChatGPT", icon: "🟢", type: "cloud",
-    description: "ChatGPT 系列模型，通用能力强，学术写作与代码生成优秀",
-    baseUrl: "https://api.openai.com/v1/chat/completions",
-    requiresKey: true, keyPlaceholder: "sk-...",
-    signupUrl: "https://platform.openai.com/api-keys",
-    models: [
-      { id: "gpt-4o", name: "GPT-4o", desc: "最新旗舰，多模态能力强", default: true },
-      { id: "gpt-4o-mini", name: "GPT-4o Mini", desc: "轻量快速，性价比高" },
-      { id: "gpt-4-turbo", name: "GPT-4 Turbo", desc: "大上下文，推理强" },
-      { id: "gpt-3.5-turbo", name: "GPT-3.5 Turbo", desc: "经济实惠，速度快" },
-      { id: "o1-mini", name: "o1-mini", desc: "推理模型，深度思考" },
-    ],
-    format: "openai",
-  },
-  ollama: {
-    id: "ollama", name: "Ollama (本地)", icon: "🦙", type: "local",
-    description: "本地运行的开源模型，无需 API Key，完全私有",
-    baseUrl: "http://localhost:11434",
-    requiresKey: false,
-    models: [
-      { id: "qwen2.5:7b", name: "Qwen 2.5 7B", desc: "中文能力强，推荐", default: true },
-      { id: "llama3.1:8b", name: "Llama 3.1 8B", desc: "Meta 开源模型" },
-      { id: "mistral:7b", name: "Mistral 7B", desc: "欧洲开源模型" },
-      { id: "deepseek-r1:7b", name: "DeepSeek R1 7B", desc: "推理能力强" },
-      { id: "gemma2:9b", name: "Gemma 2 9B", desc: "Google 开源模型" },
-      { id: "custom", name: "自定义模型...", desc: "输入任意已下载的模型名" },
-    ],
-    format: "openai",
-  },
-  groq: {
-    id: "groq", name: "Groq (免费)", icon: "⚡", type: "cloud-free",
-    description: "极速推理，免费额度慷慨，需注册获取 API Key",
-    baseUrl: "https://api.groq.com/openai/v1/chat/completions",
-    requiresKey: true, keyPlaceholder: "gsk_...",
-    signupUrl: "https://console.groq.com",
-    models: [
-      { id: "llama-3.3-70b-versatile", name: "Llama 3.3 70B", desc: "免费，性能强劲", default: true },
-      { id: "mixtral-8x7b-32768", name: "Mixtral 8x7B", desc: "免费，上下文长" },
-      { id: "gemma2-9b-it", name: "Gemma 2 9B", desc: "免费，响应快" },
-    ],
-    format: "openai",
-  },
-  together: {
-    id: "together", name: "Together AI (免费)", icon: "🤝", type: "cloud-free",
-    description: "每月免费额度，支持多种开源模型",
-    baseUrl: "https://api.together.xyz/v1/chat/completions",
-    requiresKey: true, keyPlaceholder: "tog_...",
-    signupUrl: "https://api.together.xyz",
-    models: [
-      { id: "Qwen/Qwen2.5-72B-Instruct-Turbo", name: "Qwen 2.5 72B", desc: "中文最佳", default: true },
-      { id: "meta-llama/Llama-3.3-70B-Instruct-Turbo", name: "Llama 3.3 70B", desc: "综合能力强" },
-      { id: "deepseek-ai/DeepSeek-R1-Distill-Llama-70B", name: "DeepSeek R1 70B", desc: "推理能力强" },
-    ],
-    format: "openai",
-  },
-  openrouter: {
-    id: "openrouter", name: "OpenRouter (免费)", icon: "🔀", type: "cloud-free",
-    description: "聚合多家模型，部分模型免费使用",
-    baseUrl: "https://openrouter.ai/api/v1/chat/completions",
-    requiresKey: true, keyPlaceholder: "sk-or-...",
-    signupUrl: "https://openrouter.ai",
-    models: [
-      { id: "qwen/qwen-2.5-72b-instruct:free", name: "Qwen 2.5 72B (Free)", desc: "免费，中文强", default: true },
-      { id: "meta-llama/llama-3.3-70b-instruct:free", name: "Llama 3.3 70B (Free)", desc: "免费" },
-      { id: "google/gemma-2-9b-it:free", name: "Gemma 2 9B (Free)", desc: "免费" },
-    ],
-    format: "openai",
-  },
-  siliconflow: {
-    id: "siliconflow", name: "SiliconFlow (免费)", icon: "🌊", type: "cloud-free",
-    description: "国内平台，免费额度，中文模型体验好",
-    baseUrl: "https://api.siliconflow.cn/v1/chat/completions",
-    requiresKey: true, keyPlaceholder: "sk-...",
-    signupUrl: "https://cloud.siliconflow.cn",
-    models: [
-      { id: "Qwen/Qwen2.5-7B-Instruct", name: "Qwen 2.5 7B", desc: "免费，中文优秀", default: true },
-      { id: "THUDM/glm-4-9b-chat", name: "GLM-4 9B", desc: "免费，清华开源" },
-      { id: "deepseek-ai/DeepSeek-V2.5", name: "DeepSeek V2.5", desc: "免费" },
-    ],
-    format: "openai",
-  },
-};
-
-const DEFAULT_CONFIG = {
-  provider: "anthropic",
-  apiKey: "",
-  model: "claude-sonnet-4-20250514",
-  customModel: "",
-  ollamaUrl: "http://localhost:11434",
-  temperature: 0.7,
-  maxTokens: 1000,
-  systemPromptPrefix: "",
-};
-
 // ── AI Config Context ──
 const AIConfigContext = createContext(null);
 
 function useAIConfig() {
   return useContext(AIConfigContext);
-}
-
-// ── Universal AI Caller ──
-async function callAI(config, systemPrompt, userMessage, maxTokens) {
-  const provider = AI_PROVIDERS[config.provider];
-  if (!provider) return null;
-  const tokens = maxTokens || config.maxTokens || 1000;
-  const fullSystem = config.systemPromptPrefix ? `${config.systemPromptPrefix}\n\n${systemPrompt}` : systemPrompt;
-  const model = config.customModel || config.model;
-
-  try {
-    if (provider.format === "anthropic") {
-      const res = await fetch(provider.baseUrl, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", ...(config.apiKey ? { "x-api-key": config.apiKey } : {}) },
-        body: JSON.stringify({ model, max_tokens: tokens, system: fullSystem, messages: [{ role: "user", content: userMessage }] }),
-      });
-      const data = await res.json();
-      if (data.error) throw new Error(data.error.message || "API Error");
-      return data.content?.map(b => b.text || "").join("\n") || "";
-    } else {
-      // OpenAI-compatible (Ollama, Groq, Together, OpenRouter, SiliconFlow)
-      const url = config.provider === "ollama" ? `${config.ollamaUrl}/v1/chat/completions` : provider.baseUrl;
-      const headers = { "Content-Type": "application/json" };
-      if (config.apiKey) headers["Authorization"] = `Bearer ${config.apiKey}`;
-      if (config.provider === "openrouter") {
-        headers["HTTP-Referer"] = "https://sciflow.app";
-        headers["X-Title"] = "SciFlow";
-      }
-      const res = await fetch(url, {
-        method: "POST", headers,
-        body: JSON.stringify({ model, messages: [{ role: "system", content: fullSystem }, { role: "user", content: userMessage }], max_tokens: tokens, temperature: config.temperature }),
-      });
-      const data = await res.json();
-      if (data.error) throw new Error(data.error?.message || JSON.stringify(data.error));
-      return data.choices?.[0]?.message?.content || "";
-    }
-  } catch (err) {
-    console.error(`AI (${provider.name}) error:`, err);
-    return null;
-  }
-}
-
-async function callAIJSON(config, systemPrompt, userMessage, maxTokens) {
-  const raw = await callAI(config, systemPrompt, userMessage, maxTokens);
-  if (!raw) return null;
-  try { return JSON.parse(raw.replace(/```json|```/g, "").trim()); } catch { return null; }
-}
-
-async function callAIChat(config, systemPrompt, messages) {
-  const provider = AI_PROVIDERS[config.provider];
-  if (!provider) return null;
-  const model = config.customModel || config.model;
-  const fullSystem = config.systemPromptPrefix ? `${config.systemPromptPrefix}\n\n${systemPrompt}` : systemPrompt;
-  try {
-    if (provider.format === "anthropic") {
-      const res = await fetch(provider.baseUrl, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", ...(config.apiKey ? { "x-api-key": config.apiKey } : {}) },
-        body: JSON.stringify({ model, max_tokens: config.maxTokens || 1000, system: fullSystem, messages }),
-      });
-      const data = await res.json();
-      return data.content?.map(b => b.text || "").join("\n") || null;
-    } else {
-      const url = config.provider === "ollama" ? `${config.ollamaUrl}/v1/chat/completions` : provider.baseUrl;
-      const headers = { "Content-Type": "application/json" };
-      if (config.apiKey) headers["Authorization"] = `Bearer ${config.apiKey}`;
-      if (config.provider === "openrouter") { headers["HTTP-Referer"] = "https://sciflow.app"; headers["X-Title"] = "SciFlow"; }
-      const res = await fetch(url, {
-        method: "POST", headers,
-        body: JSON.stringify({ model, messages: [{ role: "system", content: fullSystem }, ...messages], max_tokens: config.maxTokens || 1000, temperature: config.temperature }),
-      });
-      const data = await res.json();
-      return data.choices?.[0]?.message?.content || null;
-    }
-  } catch (err) { console.error("Chat error:", err); return null; }
 }
 
 // ── Icons ──
@@ -446,183 +267,6 @@ const CSS = `
 @keyframes shimmer{0%{background-position:-200% 0}100%{background-position:200% 0}}.shimmer-loading{background:linear-gradient(90deg,var(--bg-elevated) 25%,var(--bg-hover) 50%,var(--bg-elevated) 75%);background-size:200% 100%;animation:shimmer 1.5s infinite;border-radius:var(--radius-sm)}
 `;
 
-// ═══════════ SETTINGS PAGE ═══════════
-function SettingsPage({ config, setConfig }) {
-  const [testStatus, setTestStatus] = useState(null); // null | "loading" | "success" | "error"
-  const [testMsg, setTestMsg] = useState("");
-  const [ollamaModels, setOllamaModels] = useState([]);
-  const provider = AI_PROVIDERS[config.provider];
-
-  // Fetch Ollama models when Ollama selected
-  useEffect(() => {
-    if (config.provider === "ollama") {
-      fetch(`${config.ollamaUrl}/api/tags`).then(r => r.json()).then(data => {
-        if (data.models) setOllamaModels(data.models.map(m => ({ id: m.name, name: m.name, desc: `${(m.size / 1e9).toFixed(1)}GB` })));
-      }).catch(() => setOllamaModels([]));
-    }
-  }, [config.provider, config.ollamaUrl]);
-
-  const testConnection = async () => {
-    setTestStatus("loading"); setTestMsg("正在测试连接...");
-    const result = await callAI(config, "You are a test assistant.", "Say 'connection successful' in Chinese, keep it under 10 words.", 100);
-    if (result) { setTestStatus("success"); setTestMsg(`连接成功！回复: "${result.slice(0, 60)}"`); }
-    else { setTestStatus("error"); setTestMsg("连接失败，请检查配置。"); }
-  };
-
-  const displayModels = config.provider === "ollama" && ollamaModels.length > 0 ? ollamaModels : provider.models;
-
-  const typeLabel = { cloud: "商业云服务", local: "本地部署", "cloud-free": "免费云服务" };
-  const typeColor = { cloud: "var(--accent-purple)", local: "var(--accent-green)", "cloud-free": "var(--accent-blue)" };
-
-  return (
-    <div className="settings-grid">
-      {/* Provider List */}
-      <div>
-        <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', marginBottom: 10, textTransform: 'uppercase', letterSpacing: 1.5 }}>
-          选择 AI 服务商
-        </div>
-        <div className="provider-list">
-          {Object.values(AI_PROVIDERS).map(p => (
-            <div key={p.id} className={`provider-card ${config.provider === p.id ? 'active' : ''}`}
-              onClick={() => {
-                const defaultModel = p.models.find(m => m.default)?.id || p.models[0]?.id;
-                setConfig(c => ({ ...c, provider: p.id, model: defaultModel, customModel: "", apiKey: p.id === config.provider ? c.apiKey : "" }));
-                setTestStatus(null);
-              }}>
-              <div className="provider-radio" />
-              <div className="provider-icon">{p.icon}</div>
-              <div className="provider-info">
-                <div className="provider-name">{p.name}</div>
-                <div className="provider-type" style={{ color: typeColor[p.type] }}>{typeLabel[p.type]}</div>
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      {/* Config Panel */}
-      <div className="config-section fade-in" key={config.provider}>
-        <div className="config-section-header">
-          <span style={{ fontSize: 24 }}>{provider.icon}</span>
-          {provider.name} 配置
-          <span style={{ marginLeft: 'auto', fontSize: 11, padding: '3px 8px', borderRadius: 4, background: `${typeColor[provider.type]}18`, color: typeColor[provider.type], fontWeight: 600 }}>
-            {typeLabel[provider.type]}
-          </span>
-        </div>
-        <div className="config-section-body">
-          <div style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 20, lineHeight: 1.6 }}>
-            {provider.description}
-            {provider.signupUrl && (
-              <span> — <a className="signup-link" href={provider.signupUrl} target="_blank" rel="noopener noreferrer">
-                注册获取免费 API Key <Icons.ExternalLink />
-              </a></span>
-            )}
-          </div>
-
-          {/* Ollama URL */}
-          {config.provider === "ollama" && (
-            <div className="form-group">
-              <div className="form-label">Ollama 服务地址</div>
-              <input className="input-field" value={config.ollamaUrl}
-                onChange={e => setConfig(c => ({ ...c, ollamaUrl: e.target.value }))}
-                placeholder="http://localhost:11434" />
-              <div className="form-hint">确保 Ollama 已启动且设置了 OLLAMA_ORIGINS=* 环境变量以允许跨域请求</div>
-            </div>
-          )}
-
-          {/* API Key */}
-          {provider.requiresKey && (
-            <div className="form-group">
-              <div className="form-label">API Key</div>
-              <input className="input-field" type="password" value={config.apiKey}
-                onChange={e => setConfig(c => ({ ...c, apiKey: e.target.value }))}
-                placeholder={provider.keyPlaceholder} />
-              <div className="form-hint">密钥保存在浏览器本地存储中，刷新页面后自动恢复</div>
-            </div>
-          )}
-
-          {/* Model Selection */}
-          <div className="form-group">
-            <div className="form-label">选择模型 {config.provider === "ollama" && ollamaModels.length > 0 &&
-              <span style={{ fontSize: 10, color: 'var(--accent-green)' }}>（已检测到 {ollamaModels.length} 个本地模型）</span>}</div>
-            <div className="model-grid">
-              {displayModels.map(m => (
-                <div key={m.id} className={`model-option ${config.model === m.id ? 'active' : ''}`}
-                  onClick={() => setConfig(c => ({ ...c, model: m.id, customModel: "" }))}>
-                  <div className="model-option-name">{m.name}</div>
-                  <div className="model-option-desc">{m.desc}</div>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {/* Custom Model */}
-          <div className="form-group">
-            <div className="form-label">自定义模型名 <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>（可选，覆盖上方选择）</span></div>
-            <input className="input-field" value={config.customModel}
-              onChange={e => setConfig(c => ({ ...c, customModel: e.target.value }))}
-              placeholder={config.provider === "ollama" ? "例如: qwen2.5:14b" : "例如: model-name"} />
-          </div>
-
-          {/* Temperature */}
-          <div className="form-group">
-            <div className="form-label">Temperature（创造性）</div>
-            <div className="slider-row">
-              <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>精确</span>
-              <input type="range" min="0" max="1" step="0.1" value={config.temperature}
-                onChange={e => setConfig(c => ({ ...c, temperature: parseFloat(e.target.value) }))} />
-              <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>创意</span>
-              <span className="slider-val">{config.temperature}</span>
-            </div>
-          </div>
-
-          {/* Max Tokens */}
-          <div className="form-group">
-            <div className="form-label">最大输出长度</div>
-            <div className="slider-row">
-              <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>简短</span>
-              <input type="range" min="200" max="4000" step="200" value={config.maxTokens}
-                onChange={e => setConfig(c => ({ ...c, maxTokens: parseInt(e.target.value) }))} />
-              <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>详细</span>
-              <span className="slider-val">{config.maxTokens}</span>
-            </div>
-          </div>
-
-          {/* System Prompt Prefix */}
-          <div className="form-group">
-            <div className="form-label">系统提示词前缀 <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>（可选，添加到所有请求前）</span></div>
-            <textarea className="input-field" rows={3} value={config.systemPromptPrefix}
-              onChange={e => setConfig(c => ({ ...c, systemPromptPrefix: e.target.value }))}
-              placeholder="例如: 请始终使用中文回答，使用学术风格。"
-              style={{ resize: 'vertical', fontFamily: 'var(--font-sans)' }} />
-          </div>
-
-          {/* Test Connection */}
-          <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
-            <button className="btn btn-ai" onClick={testConnection} disabled={testStatus === "loading"}>
-              {testStatus === "loading" ? <Icons.Loader /> : <Icons.Sparkle />}
-              测试连接
-            </button>
-            <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
-              当前: <span style={{ color: 'var(--ai-glow)', fontWeight: 500 }}>{provider.name}</span>
-              {" / "}
-              <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11 }}>{config.customModel || config.model}</span>
-            </div>
-          </div>
-          {testStatus && (
-            <div className={`test-result ${testStatus === "success" ? "test-success" : testStatus === "error" ? "test-error" : "test-loading"}`}>
-              {testStatus === "success" && <Icons.CheckCircle />}
-              {testStatus === "error" && <Icons.AlertCircle />}
-              {testStatus === "loading" && <Icons.Loader />}
-              {testMsg}
-            </div>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-}
-
 // ═══════════ PAGE COMPONENTS (abbreviated, using config) ═══════════
 function DashboardPage({ setActiveModule, config, currentTopic }) {
   const prov = AI_PROVIDERS[config.provider];
@@ -683,7 +327,7 @@ function TopicPage({ config }) {
   const [editingName, setEditingName] = useState(null);
   const [tempName, setTempName] = useState("");
   const defs = [{word:"zinc-air battery",type:"同义词"},{word:"Zn-air battery",type:"同义词"},{word:"metal-air battery",type:"近义词"},{word:"oxygen reduction reaction",type:"跨学科"},{word:"bifunctional catalyst",type:"相关表达"}];
-  const expand = async()=>{if(!kw.trim())return;setLd(true);setAiKw(null);const r=await callAIJSON(config,'你是学术关键词扩展助手。返回纯JSON:{"keywords":[{"word":"...","type":"同义词|近义词|跨学科|相关表达","reason":"..."}]}。8-12个英文关键词。',`扩展:"${kw}"`);setLd(false);if(r?.keywords)setAiKw(r.keywords);};
+  const expand = async()=>{if(!kw.trim())return;setLd(true);setAiKw(null);const r=await callAIJSON(config,PROMPTS.KEYWORD_EXPANDER,`扩展:"${kw}"`);setLd(false);if(r?.keywords)setAiKw(r.keywords);};
 
   const refreshQueries = async () => {
     const queries = await getSearchQueries();
@@ -893,7 +537,7 @@ function KnowledgePage({ config }) {
     if (grp === name) setGrp("全部");
   };
   const filt=grp==="全部"?papers:papers.filter(p=>p.group===grp);
-  const doSum=async(p)=>{setSel(p);setSum("");setSL(true);const r=await callAI(config,'你是材料科学资深研究员。简析论文:1)核心问题 2)方法创新 3)结论 4)对锌空气电池课题参考价值。中文≤150字。',`标题:${p.title}
+  const doSum=async(p)=>{setSel(p);setSum("");setSL(true);const r=await callAI(config,PROMPTS.PAPER_SUMMARY,`标题:${p.title}
 作者:${p.authors}
 期刊:${p.journal}(${p.year})`,500);setSL(false);setSum(r||"AI不可用");};
   return(
@@ -949,7 +593,7 @@ function ExperimentPage({ config }) {
     saveUIState("experiment_nodes", { nodes });
   }, [nodes, nodesReady]);
 
-  const diag=async()=>{if(!di.trim())return;setDL(true);setDr("");const r=await callAI(config,'你是材料科学实验导师。分析实验异常:1)2-3个原因 2)排查路径 3)解决建议。中文≤200字。',di,600);setDL(false);setDr(r||"AI不可用");};
+  const diag=async()=>{if(!di.trim())return;setDL(true);setDr("");const r=await callAI(config,PROMPTS.EXPERIMENT_DIAGNOSIS,di,600);setDL(false);setDr(r||"AI不可用");};
   const updateNode = (id, key, value) => setNodes(prev => prev.map(n => n.id===id?{...n,[key]:value}:n));
   const addNode = () => setNodes(prev => [...prev, {id:Date.now(), level:2, label:'新节点', text:'可编辑内容', refs:'', color:'var(--accent-blue)'}]);
   const deleteNode = (id) => setNodes(prev => prev.filter(n => n.id !== id));
@@ -963,73 +607,6 @@ function ExperimentPage({ config }) {
       </div></div>
       <div className="section-header"><div className="section-title">问题分解树</div><button className="btn btn-secondary btn-sm" onClick={addNode}><Icons.Plus/>新增节点</button></div>
       <div style={{display:'flex',flexDirection:'column',gap:10}}>{nodes.map((n,i)=><div key={n.id} className={`tree-node tree-level-${n.level} fade-in delay-${(i%4)+1}`}><div style={{display:'flex',gap:8,alignItems:'center'}}><input className="input-field" style={{marginBottom:6,maxWidth:220,color:n.color,fontWeight:600}} value={n.label} onChange={e=>updateNode(n.id,'label',e.target.value)}/><button className="btn btn-secondary btn-sm" style={{marginBottom:6,color:'var(--accent-pink)'}} onClick={()=>deleteNode(n.id)}>删除</button></div><textarea className="input-field" rows={2} value={n.text} onChange={e=>updateNode(n.id,'text',e.target.value)} style={{resize:'vertical'}}/>{n.refs!==undefined&&<input className="input-field" style={{marginTop:6}} placeholder="关联文献" value={n.refs||''} onChange={e=>updateNode(n.id,'refs',e.target.value)}/>}</div>)}</div>
-    </div>);
-}
-
-function WritingPage({ config }) {
-  const [sec, setSec] = useState("intro");
-  const defaultText = `锌空气电池因其理论能量密度高、成本低廉、环境友好等优点，被认为是下一代可持续能源存储技术的有力候选方案。
-
-近年来，过渡金属氧化物成为替代贵金属催化剂的研究热点。
-
-尽管已有大量研究，但对其构效关系的理解仍不够深入。`;
-  const [text, setText] = useState(defaultText);
-  const defaultOutline = [{id:"abstract",label:"摘要"},{id:"intro",label:"1. 引言"},{id:"intro-bg",label:"1.1 背景",sub:true},{id:"methods",label:"2. 实验方法"},{id:"results",label:"3. 结果讨论"},{id:"conclusion",label:"4. 结论"}];
-  const [outline, setOutline] = useState(defaultOutline);
-  const [outlineReady, setOutlineReady] = useState(false);
-  const [newSectionName, setNewSectionName] = useState("");
-
-  useEffect(() => {
-    (async () => {
-      try {
-        const [drafts, outlineState] = await Promise.all([getDrafts(), getUIState("writing_outline")]);
-        const found = drafts.find(x => x.id === sec);
-        if (found) setText(found.content);
-        if (outlineState?.items?.length) setOutline(outlineState.items);
-      } finally {
-        setOutlineReady(true);
-      }
-    })();
-  }, [sec]);
-  const saveText = useCallback((val) => { setText(val); saveDraft({ id: sec, content: val, updatedAt: Date.now() }); }, [sec]);
-  useEffect(() => {
-    if (!outlineReady) return;
-    saveUIState("writing_outline", { items: outline });
-  }, [outline, outlineReady]);
-  const outlineDrag = useDragReorder((fromIndex, toIndex) => setOutline(prev => reorderList(prev, fromIndex, toIndex)));
-  const [sug, setSug] = useState([]);const [aL, setAL] = useState(false);const [aq, setAq] = useState("");
-  const analyze=async()=>{setAL(true);setSug([]);const r=await callAIJSON(config,'学术写作教授。分析论文段落。返回JSON:{"suggestions":[{"type":"观点检查|逻辑分析|语言润色|引用建议","content":"...","priority":"high|medium|low"}]}。3-4条。',`引言:
-${text}`,800);setAL(false);if(r?.suggestions)setSug(r.suggestions);};
-  const ask=async()=>{if(!aq.trim())return;const q=aq;setAq("");setAL(true);const r=await callAI(config,'锌空气电池论文写作助手。中文≤150字。',`段落:
-${text}
-
-问题:${q}`,500);setAL(false);if(r)setSug(p=>[...p,{type:"AI 回答",content:r,priority:"high"}]);};
-  const pc={high:'var(--accent-orange)',medium:'var(--accent-amber)',low:'var(--accent-blue)'};
-  const editSuggestion = (i, val) => setSug(prev => prev.map((s,idx)=>idx===i?{...s, content:val}:s));
-  const addSection = () => {
-    const label = newSectionName.trim();
-    if (!label) return;
-    const id = `section-${Date.now()}`;
-    setOutline(prev => [...prev, { id, label }]);
-    setSec(id);
-    saveDraft({ id, content: "", updatedAt: Date.now() });
-    setNewSectionName("");
-  };
-  const updateSectionLabel = (id, label) => setOutline(prev => prev.map(s => s.id === id ? { ...s, label } : s));
-  const deleteSection = (id) => {
-    setOutline(prev => prev.filter(s => s.id !== id));
-    if (sec === id) setSec("intro");
-  };
-  const currentSectionLabel = outline.find(o => o.id === sec)?.label || "正文";
-  return(
-    <div className="writing-layout">
-      <div className="writing-outline fade-in"><div style={{fontSize:10,fontWeight:700,color:'var(--text-muted)',marginBottom:8,textTransform:'uppercase',letterSpacing:1.5}}>大纲</div>{outline.map((o,index)=><div key={o.id} className={`outline-item ${o.sub?'outline-sub':''} ${sec===o.id?'active':''} ${outlineDrag.draggingIndex===index?'dragging':''}`} onClick={()=>setSec(o.id)} draggable onDragStart={outlineDrag.startDrag(index)} onDragOver={outlineDrag.dragOver} onDrop={outlineDrag.dropAt(index)} onDragEnd={outlineDrag.endDrag}><span className="drag-handle" title="拖拽排序">⋮⋮</span>{!o.sub&&<Icons.ChevronRight/>}<span style={{flex:1}}>{o.label}</span><button className="btn btn-secondary btn-sm" style={{padding:'1px 6px'}} onClick={(e)=>{e.stopPropagation();deleteSection(o.id);}}>删</button></div>)}<div style={{display:'flex',gap:6,marginTop:8}}><input className="input-field" placeholder="新增章节" value={newSectionName} onChange={e=>setNewSectionName(e.target.value)} onKeyDown={e=>e.key==='Enter'&&addSection()}/><button className="btn btn-secondary btn-sm" onClick={addSection}><Icons.Plus/></button></div></div>
-      <div className="writing-editor fade-in delay-1"><div className="editor-toolbar">{"B,I,H2,引用".split(',').map(b=><button key={b} className="tool-btn">{b}</button>)}<div style={{marginLeft:'auto'}}><button className="tool-btn ai-tool" onClick={analyze} disabled={aL}><Icons.Sparkle/>AI 分析</button></div></div><div style={{flex:1,padding:'20px',overflow:'auto'}}><input className="input-field" value={currentSectionLabel} onChange={e=>updateSectionLabel(sec,e.target.value)} style={{fontFamily:'var(--font-serif)',fontSize:20,fontWeight:700,marginBottom:14,maxWidth:360}}/><textarea className="editor-textarea" value={text} onChange={e=>saveText(e.target.value)} style={{minHeight:260}}/></div></div>
-      <div className="writing-ai-panel fade-in delay-2"><div className="ai-panel-header"><Icons.Sparkle/>AI 写作助手<AIBadge/></div><div className="ai-panel-body">
-        {sug.length===0&&!aL&&<div style={{textAlign:'center',padding:'32px 16px',color:'var(--text-muted)',fontSize:13}}><div style={{fontSize:28,marginBottom:10,opacity:.4}}>✨</div>点击「AI 分析」获取建议</div>}
-        {aL&&<div className="ai-suggestion"><div className="ai-suggestion-label"><Icons.Sparkle/>分析中...</div><TypingDots/></div>}
-        {sug.map((s,i)=><div key={i} className="ai-suggestion"><div className="ai-suggestion-label"><span style={{width:6,height:6,borderRadius:'50%',background:pc[s.priority]||'var(--ai-glow)'}}/>{s.type}<button className="btn btn-secondary btn-sm" style={{marginLeft:'auto',padding:'2px 8px'}} onClick={()=>setSug(prev=>prev.filter((_,idx)=>idx!==i))}>删除</button></div><textarea className="input-field" rows={3} value={s.content} onChange={e=>editSuggestion(i,e.target.value)} style={{marginTop:6,resize:'vertical'}}/></div>)}
-      </div><div className="ai-panel-input"><input value={aq} onChange={e=>setAq(e.target.value)} placeholder="问AI..." onKeyDown={e=>e.key==='Enter'&&ask()}/><button className="btn btn-ai btn-sm" onClick={ask} disabled={!aq.trim()||aL}><Icons.Send/></button></div></div>
     </div>);
 }
 
@@ -1122,7 +699,7 @@ function AIChatDrawer({ config }) {
   const send=async()=>{if(!inp.trim()||ld)return;const m=inp.trim();setInp("");
     const userMsg={role:"user",content:m};setMsgs(p=>[...p,userMsg]);saveChatMessage(userMsg);setLd(true);
     const hist=[...msgs,userMsg].map(x=>({role:x.role==="assistant"?"assistant":"user",content:x.content}));
-    const r=await callAIChat(config,'你是SciFlow AI科研助手。专长：材料科学、电化学、论文写作。中文≤200字。',hist);
+    const r=await callAIChat(config,PROMPTS.CHAT_ASSISTANT,hist);
     const aiMsg={role:"assistant",content:r||"暂时无法回答。"};setMsgs(p=>[...p,aiMsg]);saveChatMessage(aiMsg);setLd(false);};
   const handleClear=async()=>{await clearChatHistory();setMsgs(defaultMsg);};
   const prov=AI_PROVIDERS[config.provider];
