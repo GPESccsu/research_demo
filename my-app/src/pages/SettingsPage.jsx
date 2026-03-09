@@ -1,8 +1,8 @@
 import { useState, useEffect } from "react";
-import { AI_PROVIDERS } from "../services/promptService.js";
-import { callAI } from "../services/aiService.js";
-import { fetchOllamaModels } from "../services/ollamaService.js";
-import { PROMPTS, TEST_USER_MESSAGE } from "../prompts/index.js";
+import { AI_PROVIDERS } from "../services/promptService";
+import { callAI } from "../services/aiService";
+import { fetchOllamaModels } from "../services/ollamaService";
+import { PROMPTS, TEST_USER_MESSAGE } from "../prompts/index";
 
 // ── Icons used by SettingsPage ──
 const Icons = {

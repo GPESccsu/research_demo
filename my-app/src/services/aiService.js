@@ -2,7 +2,7 @@
 // aiService.js — Backend AI caller (callAI / callAIJSON / callAIChat)
 // ═══════════════════════════════════════════════════════════
 
-import { apiRequest } from "./apiClient.js";
+import { apiRequest } from "./apiClient";
 
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || "http://localhost:8000").replace(/\/$/, "");
 

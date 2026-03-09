@@ -1,11 +1,11 @@
 import { useState, useEffect, useCallback } from "react";
-import { getDrafts, saveDraft, getUIState, saveUIState } from "../db.js";
-import { callAI, callAIJSON } from "../services/aiService.js";
-import { PROMPTS } from "../prompts/index.js";
-import WritingOutline from "../components/writing/WritingOutline.jsx";
-import WritingEditor from "../components/writing/WritingEditor.jsx";
-import WritingAIPanel from "../components/writing/WritingAIPanel.jsx";
-import SentenceCompareAssistant from "../components/writing/SentenceCompareAssistant.jsx";
+import { getDrafts, saveDraft, getUIState, saveUIState } from "../db";
+import { callAI, callAIJSON } from "../services/aiService";
+import { PROMPTS } from "../prompts/index";
+import WritingOutline from "../components/writing/WritingOutline";
+import WritingEditor from "../components/writing/WritingEditor";
+import WritingAIPanel from "../components/writing/WritingAIPanel";
+import SentenceCompareAssistant from "../components/writing/SentenceCompareAssistant";
 
 const DEFAULT_TEXT = `锌空气电池因其理论能量密度高、成本低廉、环境友好等优点，被认为是下一代可持续能源存储技术的有力候选方案。
 
