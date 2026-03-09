@@ -222,6 +222,10 @@ export async function addClip(clip) {
   return await dbAdd("clips", clip);
 }
 
+export async function updateClip(clip) {
+  await dbPut("clips", clip);
+}
+
 export async function deleteClip(id) {
   await dbDelete("clips", id);
 }
