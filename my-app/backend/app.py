@@ -5,7 +5,6 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-from app.api.routes.tasks import router as tasks_router
 from app.services.prompt_loader import load_prompt
 
 app = FastAPI(title="SciFlow Local Backend")
@@ -17,8 +16,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-app.include_router(tasks_router)
 
 AI_PROVIDERS: Dict[str, Dict[str, Any]] = {
     "anthropic": {
