@@ -1,125 +1,19 @@
-import { useState, useEffect, useRef, useCallback, createContext, useContext } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { saveConfig, loadConfig, getPapers, savePapers, addPaper, deletePaper, getLogs, saveLogs, addLog, getChecklist, saveChecklist, getChatHistory, saveChatMessage, clearChatHistory, getSynonymGroups, saveSynonymGroup, deleteSynonymGroup, getClips, addClip, getDrafts, saveDraft, getUIState, saveUIState, initializeDatabase, exportDatabaseSnapshot, importDatabaseSnapshot, getSearchQueries, addSearchQuery, updateSearchQuery, deleteSearchQuery } from "./db.js";
+import AI_PROVIDERS from "./config/aiProviders.js";
+import DEFAULT_CONFIG from "./config/defaultConfig.js";
+import { createModules, AI_MODS, PAPERS, CK_DATA, DEFAULT_TOPICS } from "./config/modules.js";
+import reorderList from "./utils/reorderList.js";
+import parseRIS from "./utils/parseRIS.js";
+import parseBibTeX from "./utils/parseBibTeX.js";
+import papersToRIS from "./utils/papersToRIS.js";
+import useDragReorder from "./hooks/useDragReorder.js";
+import { AIConfigContext } from "./context/AIConfigContext.jsx";
 
 // ═══════════════════════════════════════════════════════════
 // SCIFLOW — AI-POWERED RESEARCH ASSISTANT
 // With Multi-Provider AI Configuration
 // ═══════════════════════════════════════════════════════════
-
-// ── AI Provider Definitions ──
-const AI_PROVIDERS = {
-  anthropic: {
-    id: "anthropic", name: "Anthropic Claude", icon: "🟣", type: "cloud",
-    description: "Claude 系列模型，强大的学术理解与写作能力",
-    baseUrl: "https://api.anthropic.com/v1/messages",
-    requiresKey: true, keyPlaceholder: "sk-ant-...",
-    models: [
-      { id: "claude-sonnet-4-20250514", name: "Claude Sonnet 4", desc: "均衡性能，推荐日常使用", default: true },
-      { id: "claude-haiku-4-5-20251001", name: "Claude Haiku 4.5", desc: "最快响应，适合简单任务" },
-    ],
-    format: "anthropic",
-  },
-  openai: {
-    id: "openai", name: "OpenAI ChatGPT", icon: "🟢", type: "cloud",
-    description: "ChatGPT 系列模型，通用能力强，学术写作与代码生成优秀",
-    baseUrl: "https://api.openai.com/v1/chat/completions",
-    requiresKey: true, keyPlaceholder: "sk-...",
-    signupUrl: "https://platform.openai.com/api-keys",
-    models: [
-      { id: "gpt-4o", name: "GPT-4o", desc: "最新旗舰，多模态能力强", default: true },
-      { id: "gpt-4o-mini", name: "GPT-4o Mini", desc: "轻量快速，性价比高" },
-      { id: "gpt-4-turbo", name: "GPT-4 Turbo", desc: "大上下文，推理强" },
-      { id: "gpt-3.5-turbo", name: "GPT-3.5 Turbo", desc: "经济实惠，速度快" },
-      { id: "o1-mini", name: "o1-mini", desc: "推理模型，深度思考" },
-    ],
-    format: "openai",
-  },
-  ollama: {
-    id: "ollama", name: "Ollama (本地)", icon: "🦙", type: "local",
-    description: "本地运行的开源模型，无需 API Key，完全私有",
-    baseUrl: "http://localhost:11434",
-    requiresKey: false,
-    models: [
-      { id: "qwen2.5:7b", name: "Qwen 2.5 7B", desc: "中文能力强，推荐", default: true },
-      { id: "llama3.1:8b", name: "Llama 3.1 8B", desc: "Meta 开源模型" },
-      { id: "mistral:7b", name: "Mistral 7B", desc: "欧洲开源模型" },
-      { id: "deepseek-r1:7b", name: "DeepSeek R1 7B", desc: "推理能力强" },
-      { id: "gemma2:9b", name: "Gemma 2 9B", desc: "Google 开源模型" },
-      { id: "custom", name: "自定义模型...", desc: "输入任意已下载的模型名" },
-    ],
-    format: "openai",
-  },
-  groq: {
-    id: "groq", name: "Groq (免费)", icon: "⚡", type: "cloud-free",
-    description: "极速推理，免费额度慷慨，需注册获取 API Key",
-    baseUrl: "https://api.groq.com/openai/v1/chat/completions",
-    requiresKey: true, keyPlaceholder: "gsk_...",
-    signupUrl: "https://console.groq.com",
-    models: [
-      { id: "llama-3.3-70b-versatile", name: "Llama 3.3 70B", desc: "免费，性能强劲", default: true },
-      { id: "mixtral-8x7b-32768", name: "Mixtral 8x7B", desc: "免费，上下文长" },
-      { id: "gemma2-9b-it", name: "Gemma 2 9B", desc: "免费，响应快" },
-    ],
-    format: "openai",
-  },
-  together: {
-    id: "together", name: "Together AI (免费)", icon: "🤝", type: "cloud-free",
-    description: "每月免费额度，支持多种开源模型",
-    baseUrl: "https://api.together.xyz/v1/chat/completions",
-    requiresKey: true, keyPlaceholder: "tog_...",
-    signupUrl: "https://api.together.xyz",
-    models: [
-      { id: "Qwen/Qwen2.5-72B-Instruct-Turbo", name: "Qwen 2.5 72B", desc: "中文最佳", default: true },
-      { id: "meta-llama/Llama-3.3-70B-Instruct-Turbo", name: "Llama 3.3 70B", desc: "综合能力强" },
-      { id: "deepseek-ai/DeepSeek-R1-Distill-Llama-70B", name: "DeepSeek R1 70B", desc: "推理能力强" },
-    ],
-    format: "openai",
-  },
-  openrouter: {
-    id: "openrouter", name: "OpenRouter (免费)", icon: "🔀", type: "cloud-free",
-    description: "聚合多家模型，部分模型免费使用",
-    baseUrl: "https://openrouter.ai/api/v1/chat/completions",
-    requiresKey: true, keyPlaceholder: "sk-or-...",
-    signupUrl: "https://openrouter.ai",
-    models: [
-      { id: "qwen/qwen-2.5-72b-instruct:free", name: "Qwen 2.5 72B (Free)", desc: "免费，中文强", default: true },
-      { id: "meta-llama/llama-3.3-70b-instruct:free", name: "Llama 3.3 70B (Free)", desc: "免费" },
-      { id: "google/gemma-2-9b-it:free", name: "Gemma 2 9B (Free)", desc: "免费" },
-    ],
-    format: "openai",
-  },
-  siliconflow: {
-    id: "siliconflow", name: "SiliconFlow (免费)", icon: "🌊", type: "cloud-free",
-    description: "国内平台，免费额度，中文模型体验好",
-    baseUrl: "https://api.siliconflow.cn/v1/chat/completions",
-    requiresKey: true, keyPlaceholder: "sk-...",
-    signupUrl: "https://cloud.siliconflow.cn",
-    models: [
-      { id: "Qwen/Qwen2.5-7B-Instruct", name: "Qwen 2.5 7B", desc: "免费，中文优秀", default: true },
-      { id: "THUDM/glm-4-9b-chat", name: "GLM-4 9B", desc: "免费，清华开源" },
-      { id: "deepseek-ai/DeepSeek-V2.5", name: "DeepSeek V2.5", desc: "免费" },
-    ],
-    format: "openai",
-  },
-};
-
-const DEFAULT_CONFIG = {
-  provider: "anthropic",
-  apiKey: "",
-  model: "claude-sonnet-4-20250514",
-  customModel: "",
-  ollamaUrl: "http://localhost:11434",
-  temperature: 0.7,
-  maxTokens: 1000,
-  systemPromptPrefix: "",
-};
-
-// ── AI Config Context ──
-const AIConfigContext = createContext(null);
-
-function useAIConfig() {
-  return useContext(AIConfigContext);
-}
 
 // ── Universal AI Caller ──
 async function callAI(config, systemPrompt, userMessage, maxTokens) {
@@ -229,84 +123,7 @@ function TypingDots() { return <span className="typing-dots"><span className="do
 function AIBadge({ small }) { return <span className={`ai-badge ${small?'ai-badge-sm':''}`}><Icons.Sparkle/> AI</span>; }
 
 // ── Data ──
-const MODULES = [
-  { id:"topic", label:"选题发现", labelEn:"Topic Discovery", icon:Icons.Search, color:"#E8A838" },
-  { id:"knowledge", label:"知识库", labelEn:"Knowledge Base", icon:Icons.Database, color:"#5BA4E6" },
-  { id:"reading", label:"阅读素材", labelEn:"Reading & Clips", icon:Icons.Book, color:"#6DC584" },
-  { id:"experiment", label:"实验设计", labelEn:"Experiment Design", icon:Icons.Beaker, color:"#D46B8C" },
-  { id:"writing", label:"写作助手", labelEn:"Writing Assistant", icon:Icons.Edit, color:"#9B7FD4" },
-  { id:"checklist", label:"自查清单", labelEn:"Checklist", icon:Icons.Check, color:"#E07B54" },
-  { id:"lablog", label:"实验记录", labelEn:"Lab Log", icon:Icons.Clipboard, color:"#5BBFB5" },
-];
-const AI_MODS = ["topic","writing","experiment"];
-const PAPERS = [
-  { id:1,title:"Co₃O₄ Nanosheets as Efficient OER Catalysts",authors:"Zhang, Y. et al.",journal:"ACS Nano",year:2024,tags:["Co基催化剂","OER","纳米片"],cited:47,group:"核心文献" },
-  { id:2,title:"N-doped Carbon for Bifunctional Zn-Air Batteries",authors:"Li, H. et al.",journal:"Adv. Mater.",year:2023,tags:["N掺杂","双功能","碳材料"],cited:112,group:"核心文献" },
-  { id:3,title:"MOF-derived Electrocatalysts: A Review",authors:"Wang, J. et al.",journal:"Chem. Rev.",year:2024,tags:["MOF","综述","电催化"],cited:89,group:"综述文献" },
-  { id:4,title:"Defect Engineering in Metal Oxides for ORR",authors:"Chen, M. et al.",journal:"Nature Commun.",year:2023,tags:["缺陷工程","ORR","金属氧化物"],cited:65,group:"核心文献" },
-  { id:5,title:"Single-Atom Catalysts for Oxygen Electrocatalysis",authors:"Liu, S. et al.",journal:"Joule",year:2024,tags:["单原子催化","OER","ORR"],cited:203,group:"高被引" },
-  { id:6,title:"Perovskite Oxides in Metal-Air Batteries",authors:"Kim, D. et al.",journal:"Energy Environ. Sci.",year:2023,tags:["钙钛矿","金属空气电池"],cited:78,group:"拓展阅读" },
-];
-const CK_DATA = [
-  { category:"格式规范", items:[{text:"标题格式符合目标期刊要求",done:true},{text:"摘要字数在规定范围内",done:true},{text:"关键词数量与格式正确",done:false},{text:"参考文献格式统一",done:false}]},
-  { category:"图表检查", items:[{text:"所有图片分辨率 ≥ 300 DPI",done:true},{text:"图表编号与正文引用一致",done:false},{text:"坐标轴标签与单位完整",done:true},{text:"配色对色觉障碍友好",done:false}]},
-  { category:"语言与逻辑", items:[{text:"无语法与拼写错误",done:false},{text:"每段主题句明确",done:true},{text:"因果关系表述准确",done:false},{text:"避免过度概括性表述",done:false}]},
-  { category:"数据与引用", items:[{text:"所有数据可追溯至原始记录",done:true},{text:"统计方法描述完整",done:false},{text:"引用文献均已阅读原文",done:false},{text:"无自引过多问题",done:true}]},
-];
-
-const DEFAULT_TOPICS = [
-  { id: "1", name: "锌空气电池催化剂研究", status: "进行中" },
-];
-
-function parseRIS(content) {
-  const records = content.split(/\nER\s{0,2}-/).map(r => r.trim()).filter(Boolean);
-  return records.map((record) => {
-    const paper = { title: "", authors: "", journal: "", year: new Date().getFullYear(), tags: [], group: "导入文献", cited: 0 };
-    record.split(/\r?\n/).forEach((line) => {
-      const m = line.match(/^([A-Z0-9]{2})\s{0,2}-\s*(.*)$/);
-      if (!m) return;
-      const [, tag, value] = m;
-      if (tag === "TI") paper.title = value;
-      if (tag === "AU") paper.authors = paper.authors ? `${paper.authors}; ${value}` : value;
-      if (tag === "JO" || tag === "T2") paper.journal = value;
-      if (tag === "PY" || tag === "Y1") paper.year = parseInt(value, 10) || paper.year;
-      if (tag === "KW") paper.tags.push(value);
-    });
-    return paper;
-  }).filter(p => p.title);
-}
-
-function parseBibTeX(content) {
-  const entries = content.split(/@\w+\s*\{/).slice(1);
-  return entries.map((entry) => {
-    const getField = (field) => {
-      const r = new RegExp(`${field}\\s*=\\s*[{\"]([^}\"]+)`, "i");
-      return entry.match(r)?.[1]?.trim() || "";
-    };
-    const keywords = getField("keywords").split(/[;,]/).map(s => s.trim()).filter(Boolean);
-    return {
-      title: getField("title"),
-      authors: getField("author"),
-      journal: getField("journal") || getField("booktitle"),
-      year: parseInt(getField("year"), 10) || new Date().getFullYear(),
-      tags: keywords,
-      group: "导入文献",
-      cited: 0,
-    };
-  }).filter(p => p.title);
-}
-
-function papersToRIS(papers) {
-  return papers.map((p) => [
-    "TY  - JOUR",
-    `TI  - ${p.title}`,
-    ...(String(p.authors || "").split(";").map(a => a.trim()).filter(Boolean).map(a => `AU  - ${a}`)),
-    `JO  - ${p.journal || ""}`,
-    `PY  - ${p.year || ""}`,
-    ...(p.tags || []).map(t => `KW  - ${t}`),
-    "ER  -",
-  ].join("\n")).join("\n\n");
-}
+const MODULES = createModules(Icons);
 
 // ═══════════ STYLES ═══════════
 const CSS = `
@@ -769,34 +586,6 @@ function TopicPage({ config }) {
     </div>);
 }
 
-function reorderList(list, fromIndex, toIndex) {
-  const next = [...list];
-  const [moved] = next.splice(fromIndex, 1);
-  next.splice(toIndex, 0, moved);
-  return next;
-}
-
-function useDragReorder(onReorder) {
-  const [draggingIndex, setDraggingIndex] = useState(null);
-  const startDrag = (index) => (e) => {
-    setDraggingIndex(index);
-    e.dataTransfer.effectAllowed = "move";
-    e.dataTransfer.setData("text/plain", String(index));
-  };
-  const dragOver = (e) => e.preventDefault();
-  const dropAt = (targetIndex) => (e) => {
-    e.preventDefault();
-    const sourceIndex = Number(e.dataTransfer.getData("text/plain"));
-    if (Number.isNaN(sourceIndex) || sourceIndex === targetIndex) {
-      setDraggingIndex(null);
-      return;
-    }
-    onReorder(sourceIndex, targetIndex);
-    setDraggingIndex(null);
-  };
-  const endDrag = () => setDraggingIndex(null);
-  return { draggingIndex, startDrag, dragOver, dropAt, endDrag };
-}
 
 function KnowledgePage({ config }) {
   const DEFAULT_GROUPS = ["核心文献", "综述文献", "高被引", "拓展阅读", "导入文献"];
