@@ -1,9 +1,10 @@
-import { useState, useEffect, useRef, useCallback, createContext, useContext } from "react";
+import { useState, useEffect, useRef, createContext, useContext } from "react";
 import { saveConfig, loadConfig, getPapers, savePapers, addPaper, deletePaper, getLogs, saveLogs, addLog, getChecklist, saveChecklist, getChatHistory, saveChatMessage, clearChatHistory, getSynonymGroups, saveSynonymGroup, deleteSynonymGroup, getClips, addClip, getDrafts, saveDraft, getUIState, saveUIState, initializeDatabase, exportDatabaseSnapshot, importDatabaseSnapshot, getSearchQueries, addSearchQuery, updateSearchQuery, deleteSearchQuery } from "./db.js";
 import { AI_PROVIDERS, DEFAULT_CONFIG } from "./services/promptService.js";
 import { callAI, callAIJSON, callAIChat } from "./services/aiService.js";
 import { PROMPTS } from "./prompts/index.js";
 import SettingsPage from "./pages/SettingsPage.jsx";
+import WritingPage from "./pages/WritingPage.jsx";
 
 // ═══════════════════════════════════════════════════════════
 // SCIFLOW — AI-POWERED RESEARCH ASSISTANT
@@ -606,73 +607,6 @@ function ExperimentPage({ config }) {
       </div></div>
       <div className="section-header"><div className="section-title">问题分解树</div><button className="btn btn-secondary btn-sm" onClick={addNode}><Icons.Plus/>新增节点</button></div>
       <div style={{display:'flex',flexDirection:'column',gap:10}}>{nodes.map((n,i)=><div key={n.id} className={`tree-node tree-level-${n.level} fade-in delay-${(i%4)+1}`}><div style={{display:'flex',gap:8,alignItems:'center'}}><input className="input-field" style={{marginBottom:6,maxWidth:220,color:n.color,fontWeight:600}} value={n.label} onChange={e=>updateNode(n.id,'label',e.target.value)}/><button className="btn btn-secondary btn-sm" style={{marginBottom:6,color:'var(--accent-pink)'}} onClick={()=>deleteNode(n.id)}>删除</button></div><textarea className="input-field" rows={2} value={n.text} onChange={e=>updateNode(n.id,'text',e.target.value)} style={{resize:'vertical'}}/>{n.refs!==undefined&&<input className="input-field" style={{marginTop:6}} placeholder="关联文献" value={n.refs||''} onChange={e=>updateNode(n.id,'refs',e.target.value)}/>}</div>)}</div>
-    </div>);
-}
-
-function WritingPage({ config }) {
-  const [sec, setSec] = useState("intro");
-  const defaultText = `锌空气电池因其理论能量密度高、成本低廉、环境友好等优点，被认为是下一代可持续能源存储技术的有力候选方案。
-
-近年来，过渡金属氧化物成为替代贵金属催化剂的研究热点。
-
-尽管已有大量研究，但对其构效关系的理解仍不够深入。`;
-  const [text, setText] = useState(defaultText);
-  const defaultOutline = [{id:"abstract",label:"摘要"},{id:"intro",label:"1. 引言"},{id:"intro-bg",label:"1.1 背景",sub:true},{id:"methods",label:"2. 实验方法"},{id:"results",label:"3. 结果讨论"},{id:"conclusion",label:"4. 结论"}];
-  const [outline, setOutline] = useState(defaultOutline);
-  const [outlineReady, setOutlineReady] = useState(false);
-  const [newSectionName, setNewSectionName] = useState("");
-
-  useEffect(() => {
-    (async () => {
-      try {
-        const [drafts, outlineState] = await Promise.all([getDrafts(), getUIState("writing_outline")]);
-        const found = drafts.find(x => x.id === sec);
-        if (found) setText(found.content);
-        if (outlineState?.items?.length) setOutline(outlineState.items);
-      } finally {
-        setOutlineReady(true);
-      }
-    })();
-  }, [sec]);
-  const saveText = useCallback((val) => { setText(val); saveDraft({ id: sec, content: val, updatedAt: Date.now() }); }, [sec]);
-  useEffect(() => {
-    if (!outlineReady) return;
-    saveUIState("writing_outline", { items: outline });
-  }, [outline, outlineReady]);
-  const outlineDrag = useDragReorder((fromIndex, toIndex) => setOutline(prev => reorderList(prev, fromIndex, toIndex)));
-  const [sug, setSug] = useState([]);const [aL, setAL] = useState(false);const [aq, setAq] = useState("");
-  const analyze=async()=>{setAL(true);setSug([]);const r=await callAIJSON(config,PROMPTS.WRITING_ANALYSIS,`引言:
-${text}`,800);setAL(false);if(r?.suggestions)setSug(r.suggestions);};
-  const ask=async()=>{if(!aq.trim())return;const q=aq;setAq("");setAL(true);const r=await callAI(config,PROMPTS.WRITING_QA,`段落:
-${text}
-
-问题:${q}`,500);setAL(false);if(r)setSug(p=>[...p,{type:"AI 回答",content:r,priority:"high"}]);};
-  const pc={high:'var(--accent-orange)',medium:'var(--accent-amber)',low:'var(--accent-blue)'};
-  const editSuggestion = (i, val) => setSug(prev => prev.map((s,idx)=>idx===i?{...s, content:val}:s));
-  const addSection = () => {
-    const label = newSectionName.trim();
-    if (!label) return;
-    const id = `section-${Date.now()}`;
-    setOutline(prev => [...prev, { id, label }]);
-    setSec(id);
-    saveDraft({ id, content: "", updatedAt: Date.now() });
-    setNewSectionName("");
-  };
-  const updateSectionLabel = (id, label) => setOutline(prev => prev.map(s => s.id === id ? { ...s, label } : s));
-  const deleteSection = (id) => {
-    setOutline(prev => prev.filter(s => s.id !== id));
-    if (sec === id) setSec("intro");
-  };
-  const currentSectionLabel = outline.find(o => o.id === sec)?.label || "正文";
-  return(
-    <div className="writing-layout">
-      <div className="writing-outline fade-in"><div style={{fontSize:10,fontWeight:700,color:'var(--text-muted)',marginBottom:8,textTransform:'uppercase',letterSpacing:1.5}}>大纲</div>{outline.map((o,index)=><div key={o.id} className={`outline-item ${o.sub?'outline-sub':''} ${sec===o.id?'active':''} ${outlineDrag.draggingIndex===index?'dragging':''}`} onClick={()=>setSec(o.id)} draggable onDragStart={outlineDrag.startDrag(index)} onDragOver={outlineDrag.dragOver} onDrop={outlineDrag.dropAt(index)} onDragEnd={outlineDrag.endDrag}><span className="drag-handle" title="拖拽排序">⋮⋮</span>{!o.sub&&<Icons.ChevronRight/>}<span style={{flex:1}}>{o.label}</span><button className="btn btn-secondary btn-sm" style={{padding:'1px 6px'}} onClick={(e)=>{e.stopPropagation();deleteSection(o.id);}}>删</button></div>)}<div style={{display:'flex',gap:6,marginTop:8}}><input className="input-field" placeholder="新增章节" value={newSectionName} onChange={e=>setNewSectionName(e.target.value)} onKeyDown={e=>e.key==='Enter'&&addSection()}/><button className="btn btn-secondary btn-sm" onClick={addSection}><Icons.Plus/></button></div></div>
-      <div className="writing-editor fade-in delay-1"><div className="editor-toolbar">{"B,I,H2,引用".split(',').map(b=><button key={b} className="tool-btn">{b}</button>)}<div style={{marginLeft:'auto'}}><button className="tool-btn ai-tool" onClick={analyze} disabled={aL}><Icons.Sparkle/>AI 分析</button></div></div><div style={{flex:1,padding:'20px',overflow:'auto'}}><input className="input-field" value={currentSectionLabel} onChange={e=>updateSectionLabel(sec,e.target.value)} style={{fontFamily:'var(--font-serif)',fontSize:20,fontWeight:700,marginBottom:14,maxWidth:360}}/><textarea className="editor-textarea" value={text} onChange={e=>saveText(e.target.value)} style={{minHeight:260}}/></div></div>
-      <div className="writing-ai-panel fade-in delay-2"><div className="ai-panel-header"><Icons.Sparkle/>AI 写作助手<AIBadge/></div><div className="ai-panel-body">
-        {sug.length===0&&!aL&&<div style={{textAlign:'center',padding:'32px 16px',color:'var(--text-muted)',fontSize:13}}><div style={{fontSize:28,marginBottom:10,opacity:.4}}>✨</div>点击「AI 分析」获取建议</div>}
-        {aL&&<div className="ai-suggestion"><div className="ai-suggestion-label"><Icons.Sparkle/>分析中...</div><TypingDots/></div>}
-        {sug.map((s,i)=><div key={i} className="ai-suggestion"><div className="ai-suggestion-label"><span style={{width:6,height:6,borderRadius:'50%',background:pc[s.priority]||'var(--ai-glow)'}}/>{s.type}<button className="btn btn-secondary btn-sm" style={{marginLeft:'auto',padding:'2px 8px'}} onClick={()=>setSug(prev=>prev.filter((_,idx)=>idx!==i))}>删除</button></div><textarea className="input-field" rows={3} value={s.content} onChange={e=>editSuggestion(i,e.target.value)} style={{marginTop:6,resize:'vertical'}}/></div>)}
-      </div><div className="ai-panel-input"><input value={aq} onChange={e=>setAq(e.target.value)} placeholder="问AI..." onKeyDown={e=>e.key==='Enter'&&ask()}/><button className="btn btn-ai btn-sm" onClick={ask} disabled={!aq.trim()||aL}><Icons.Send/></button></div></div>
     </div>);
 }
 
