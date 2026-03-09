@@ -24,7 +24,18 @@ export async function callAI(config, promptKey, userMessage, maxTokens) {
 export async function callAIJSON(config, promptKey, userMessage, maxTokens) {
   const raw = await callAI(config, promptKey, userMessage, maxTokens);
   if (!raw) return null;
-  try { return JSON.parse(raw.replace(/```json|```/g, "").trim()); } catch { return null; }
+  const cleaned = raw.replace(/```json|```/gi, "").trim();
+  try {
+    return JSON.parse(cleaned);
+  } catch {
+    const match = cleaned.match(/\{[\s\S]*\}/);
+    if (!match) return null;
+    try {
+      return JSON.parse(match[0]);
+    } catch {
+      return null;
+    }
+  }
 }
 
 export async function callAIChat(config, promptKey, messages) {
