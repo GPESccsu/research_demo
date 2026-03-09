@@ -132,10 +132,28 @@ async def call_provider(config: Dict[str, Any], system_prompt: str, messages: Li
                 "temperature": config.get("temperature", 0.7),
             }
             resp = await client.post(url, headers=headers, json=payload)
+
+            # Ollama fallback: some versions only expose native /api/chat endpoint.
+            if provider_id == "ollama" and resp.status_code == 404:
+                native_url = config.get("ollamaUrl", "http://localhost:11434").rstrip("/") + "/api/chat"
+                native_payload = {
+                    "model": model,
+                    "messages": [{"role": "system", "content": full_system}, *messages],
+                    "stream": False,
+                    "options": {
+                        "temperature": config.get("temperature", 0.7),
+                        "num_predict": max_tokens,
+                    },
+                }
+                resp = await client.post(native_url, headers=headers, json=native_payload)
+
             data = resp.json()
             if resp.status_code >= 400:
                 detail = data.get("error", {}).get("message") if isinstance(data.get("error"), dict) else data.get("error") or resp.text
                 raise HTTPException(status_code=resp.status_code, detail=str(detail))
+
+            if provider_id == "ollama" and isinstance(data.get("message"), dict):
+                return data.get("message", {}).get("content", "")
             return data.get("choices", [{}])[0].get("message", {}).get("content", "")
     except HTTPException:
         raise
