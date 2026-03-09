@@ -3,6 +3,7 @@ import { saveConfig, loadConfig, getPapers, savePapers, addPaper, deletePaper, g
 import { AI_PROVIDERS, DEFAULT_CONFIG } from "./services/promptService.js";
 import { callAI, callAIJSON, callAIChat } from "./services/aiService.js";
 import { fetchOllamaModels } from "./services/ollamaService.js";
+import { PROMPTS } from "./prompts/index.js";
 
 // ═══════════════════════════════════════════════════════════
 // SCIFLOW — AI-POWERED RESEARCH ASSISTANT
@@ -281,7 +282,7 @@ function SettingsPage({ config, setConfig }) {
 
   const testConnection = async () => {
     setTestStatus("loading"); setTestMsg("正在测试连接...");
-    const result = await callAI(config, "You are a test assistant.", "Say 'connection successful' in Chinese, keep it under 10 words.", 100);
+    const result = await callAI(config, PROMPTS.TEST_SYSTEM, PROMPTS.TEST_USER, 100);
     if (result) { setTestStatus("success"); setTestMsg(`连接成功！回复: "${result.slice(0, 60)}"`); }
     else { setTestStatus("error"); setTestMsg("连接失败，请检查配置。"); }
   };
@@ -500,7 +501,7 @@ function TopicPage({ config }) {
   const [editingName, setEditingName] = useState(null);
   const [tempName, setTempName] = useState("");
   const defs = [{word:"zinc-air battery",type:"同义词"},{word:"Zn-air battery",type:"同义词"},{word:"metal-air battery",type:"近义词"},{word:"oxygen reduction reaction",type:"跨学科"},{word:"bifunctional catalyst",type:"相关表达"}];
-  const expand = async()=>{if(!kw.trim())return;setLd(true);setAiKw(null);const r=await callAIJSON(config,'你是学术关键词扩展助手。返回纯JSON:{"keywords":[{"word":"...","type":"同义词|近义词|跨学科|相关表达","reason":"..."}]}。8-12个英文关键词。',`扩展:"${kw}"`);setLd(false);if(r?.keywords)setAiKw(r.keywords);};
+  const expand = async()=>{if(!kw.trim())return;setLd(true);setAiKw(null);const r=await callAIJSON(config,PROMPTS.KEYWORD_EXPANDER,`扩展:"${kw}"`);setLd(false);if(r?.keywords)setAiKw(r.keywords);};
 
   const refreshQueries = async () => {
     const queries = await getSearchQueries();
@@ -710,7 +711,7 @@ function KnowledgePage({ config }) {
     if (grp === name) setGrp("全部");
   };
   const filt=grp==="全部"?papers:papers.filter(p=>p.group===grp);
-  const doSum=async(p)=>{setSel(p);setSum("");setSL(true);const r=await callAI(config,'你是材料科学资深研究员。简析论文:1)核心问题 2)方法创新 3)结论 4)对锌空气电池课题参考价值。中文≤150字。',`标题:${p.title}
+  const doSum=async(p)=>{setSel(p);setSum("");setSL(true);const r=await callAI(config,PROMPTS.PAPER_SUMMARY,`标题:${p.title}
 作者:${p.authors}
 期刊:${p.journal}(${p.year})`,500);setSL(false);setSum(r||"AI不可用");};
   return(
@@ -766,7 +767,7 @@ function ExperimentPage({ config }) {
     saveUIState("experiment_nodes", { nodes });
   }, [nodes, nodesReady]);
 
-  const diag=async()=>{if(!di.trim())return;setDL(true);setDr("");const r=await callAI(config,'你是材料科学实验导师。分析实验异常:1)2-3个原因 2)排查路径 3)解决建议。中文≤200字。',di,600);setDL(false);setDr(r||"AI不可用");};
+  const diag=async()=>{if(!di.trim())return;setDL(true);setDr("");const r=await callAI(config,PROMPTS.EXPERIMENT_DIAGNOSIS,di,600);setDL(false);setDr(r||"AI不可用");};
   const updateNode = (id, key, value) => setNodes(prev => prev.map(n => n.id===id?{...n,[key]:value}:n));
   const addNode = () => setNodes(prev => [...prev, {id:Date.now(), level:2, label:'新节点', text:'可编辑内容', refs:'', color:'var(--accent-blue)'}]);
   const deleteNode = (id) => setNodes(prev => prev.filter(n => n.id !== id));
@@ -815,9 +816,9 @@ function WritingPage({ config }) {
   }, [outline, outlineReady]);
   const outlineDrag = useDragReorder((fromIndex, toIndex) => setOutline(prev => reorderList(prev, fromIndex, toIndex)));
   const [sug, setSug] = useState([]);const [aL, setAL] = useState(false);const [aq, setAq] = useState("");
-  const analyze=async()=>{setAL(true);setSug([]);const r=await callAIJSON(config,'学术写作教授。分析论文段落。返回JSON:{"suggestions":[{"type":"观点检查|逻辑分析|语言润色|引用建议","content":"...","priority":"high|medium|low"}]}。3-4条。',`引言:
+  const analyze=async()=>{setAL(true);setSug([]);const r=await callAIJSON(config,PROMPTS.WRITING_ANALYSIS,`引言:
 ${text}`,800);setAL(false);if(r?.suggestions)setSug(r.suggestions);};
-  const ask=async()=>{if(!aq.trim())return;const q=aq;setAq("");setAL(true);const r=await callAI(config,'锌空气电池论文写作助手。中文≤150字。',`段落:
+  const ask=async()=>{if(!aq.trim())return;const q=aq;setAq("");setAL(true);const r=await callAI(config,PROMPTS.WRITING_QA,`段落:
 ${text}
 
 问题:${q}`,500);setAL(false);if(r)setSug(p=>[...p,{type:"AI 回答",content:r,priority:"high"}]);};
@@ -939,7 +940,7 @@ function AIChatDrawer({ config }) {
   const send=async()=>{if(!inp.trim()||ld)return;const m=inp.trim();setInp("");
     const userMsg={role:"user",content:m};setMsgs(p=>[...p,userMsg]);saveChatMessage(userMsg);setLd(true);
     const hist=[...msgs,userMsg].map(x=>({role:x.role==="assistant"?"assistant":"user",content:x.content}));
-    const r=await callAIChat(config,'你是SciFlow AI科研助手。专长：材料科学、电化学、论文写作。中文≤200字。',hist);
+    const r=await callAIChat(config,PROMPTS.CHAT_ASSISTANT,hist);
     const aiMsg={role:"assistant",content:r||"暂时无法回答。"};setMsgs(p=>[...p,aiMsg]);saveChatMessage(aiMsg);setLd(false);};
   const handleClear=async()=>{await clearChatHistory();setMsgs(defaultMsg);};
   const prov=AI_PROVIDERS[config.provider];
