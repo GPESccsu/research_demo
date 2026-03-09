@@ -1,118 +1,152 @@
-# SciFlow（前后端联调版）
+# SciFlow - AI-Powered Research Assistant
 
-SciFlow 是一个面向科研写作与实验分析的本地工具，前端基于 **React + Vite**，后端基于 **FastAPI**，支持云端模型与本地 Ollama 模型。
+SciFlow (科研方法论工具箱) is a comprehensive, AI-powered research workflow management tool built with React + Vite. It guides researchers through the full lifecycle of academic research: from topic discovery and literature management to experiment design, academic writing, and self-review checklists.
 
----
+## Features
 
-## 1. 项目结构
+### Research Modules
 
-- `src/`：前端页面、组件、AI 调用服务
-- `backend/`：后端 API、提示词模板、任务路由
-- `backend/app/services/prompt_loader.py`：后端提示词 key -> 文件映射
-- `backend/app/prompts/`：后端实际生效的提示词模板（前端只传 key）
+- **Topic Discovery** - AI-powered keyword expansion, synonym group building, and search query generation for Scopus/WoS/CNKI
+- **Knowledge Base** - Literature management with grouping, tagging, citations tracking, and AI-powered paper analysis
+- **Reading & Clips** - PDF reading interface with material extraction and categorized clip storage
+- **Experiment Design** - Problem decomposition trees, AI diagnostics for experiment anomalies, and milestone tracking
+- **Writing Assistant** - Structured academic writing with AI analysis for logic, evidence, and language quality
+- **Self-Review Checklist** - Categorized quality checklist with progress tracking (format, logic, language, citations)
+- **Lab Log** - Timeline-based experiment recording with auto-generated sample IDs
 
-> 重要：前端 `src/prompts/` 中的 markdown 主要用于前端资源管理；**真正用于 AI 请求的系统提示词由后端 `backend/app/prompts/` 加载**。
+### AI Integration (Multi-Provider)
 
----
+SciFlow supports **8 AI providers** out of the box:
 
-## 2. 快速启动
+| Provider | Type | Notes |
+|----------|------|-------|
+| **Anthropic Claude** | Commercial Cloud | Claude Sonnet 4, Haiku 4.5 |
+| **OpenAI ChatGPT** | Commercial Cloud | GPT-4o, GPT-4o Mini, GPT-4 Turbo, GPT-3.5, o1-mini |
+| **Ollama** | Local (Free) | Qwen, Llama, Mistral, DeepSeek, Gemma + custom models |
+| **Groq** | Free Cloud | Ultra-fast inference, Llama 3.3 70B, Mixtral |
+| **Together AI** | Free Cloud | Qwen 2.5 72B, DeepSeek R1, Llama 3.3 |
+| **OpenRouter** | Free Cloud | Aggregated models, many free options |
+| **SiliconFlow** | Free Cloud (China) | Qwen, GLM-4, DeepSeek - excellent for Chinese |
 
-### 2.1 启动后端（先启动）
+All providers use a unified API interface with connection testing, customizable temperature, max tokens, and system prompt prefix.
 
-```bash
-cd my-app/backend
-pip install -r requirements.txt
-uvicorn app:app --reload --host 127.0.0.1 --port 8000
-```
+### Database & Persistence
 
-后端健康检查：
+All research data is automatically persisted in the browser:
 
-```bash
-curl http://127.0.0.1:8000/api/health
-```
+- **IndexedDB** (large data): Papers, lab logs, reading clips, checklist progress, writing drafts, chat history, synonym groups
+- **localStorage** (config): AI provider settings, API keys, model preferences
 
-### 2.2 启动前端
+Data survives page refreshes and browser restarts. No server required.
+
+## Getting Started
+
+### Prerequisites
+
+- Node.js >= 18
+- npm or yarn
+
+### Installation
 
 ```bash
 cd my-app
 npm install
+```
+
+### Development
+
+```bash
 npm run dev
 ```
 
-默认前端地址：`http://localhost:5173`
+The app will be available at `http://localhost:5173/` (or next available port).
 
-如需显式指定后端地址，可在 `my-app/.env` 设置：
+### Build for Production
 
 ```bash
-VITE_API_BASE_URL=http://127.0.0.1:8000
+npm run build
+npm run preview
 ```
 
----
+## Project Structure
 
-## 3. 前后端连接说明（已修订）
-
-### 3.1 AI 调用链路
-
-1. 前端通过 `src/services/aiService.js` 调用：
-   - `POST /api/ai/call`
-   - `POST /api/ai/chat`
-2. 后端在 `backend/app.py` 中：
-   - 按 `promptKey` 加载提示词
-   - 根据 provider 路由到 OpenAI / Anthropic / Ollama
-
-### 3.2 Prompt 连接规则
-
-- 前端传入 key（例如 `paper_summary`、`experiment_diagnosis`）
-- 后端 `prompt_loader.py` 负责把 key 映射到 `backend/app/prompts/*.md`
-- 若 key 不存在，后端返回 400，前端现在会显示明确错误（不再静默失败）
-
-### 3.3 本地 Ollama 连接（重点）
-
-- 现在前端的模型列表获取改为走后端代理接口：`GET /api/ollama/models`
-  - 避免浏览器直连 Ollama 的跨域问题
-- 后端调用 Ollama 时：
-  - 优先使用 `/v1/chat/completions`
-  - 若返回 404，自动降级到 `/api/chat`（兼容不同 Ollama 版本）
-
----
-
-## 4. 常见问题排查
-
-### 4.1 “Prompts 没连上 / Unknown prompt key”
-
-检查：
-
-- 前端传入的 key 是否在 `src/prompts/index.js` 中定义
-- 后端 `backend/app/services/prompt_loader.py` 的 `FILE_PROMPTS` 或 `INLINE_PROMPTS` 是否存在对应项
-- 对应的 `backend/app/prompts/*.md` 文件是否存在
-
-### 4.2 “本地模型调用失败”
-
-依次检查：
-
-1. Ollama 是否运行：
-   ```bash
-   ollama list
-   ```
-2. 设置页中的 Ollama URL 是否正确（默认 `http://localhost:11434`）
-3. 模型是否已下载（如 `qwen2.5:7b`）：
-   ```bash
-   ollama pull qwen2.5:7b
-   ```
-4. 后端日志是否有 404/连接错误（现在会自动尝试 `/api/chat` 兜底）
-
-### 4.3 “测试连接失败但没报错细节”
-
-已修复：前端 API 客户端会读取后端 `detail` 字段并抛出可读错误，便于定位配置问题。
-
----
-
-## 5. 一键启动（Windows）
-
-在 `my-app` 目录执行：
-
-```bat
-start_all.bat
+```
+research_demo/
+  my-app/                          # Main React application
+    src/
+      App.jsx                      # Main application (all modules, AI config, pages)
+      db.js                        # Database layer (IndexedDB + localStorage)
+      main.jsx                     # React entry point
+      App.css                      # Base styles
+      index.css                    # Global styles
+    index.html                     # HTML entry
+    package.json                   # Dependencies
+    vite.config.js                 # Vite configuration
+  research-methodology-toolkit.jsx # Standalone methodology toolkit component
+  research-toolkit.jsx             # Full-featured research toolkit (dark academia theme)
 ```
 
-该脚本会并行启动后端与前端开发服务。
+## Architecture
+
+### Database Layer (`src/db.js`)
+
+The database module provides a clean async API:
+
+```javascript
+// Papers
+await getPapers()           // Get all papers (returns null if empty)
+await addPaper(paper)       // Add a new paper, returns auto-generated ID
+await deletePaper(id)       // Delete by ID
+
+// Lab Logs
+await getLogs()             // Get all logs
+await addLog(log)           // Add new experiment log
+
+// Checklist
+await getChecklist()        // Get checklist categories with items
+await saveChecklist(data)   // Save updated checklist state
+
+// Writing Drafts
+await getDrafts()           // Get all drafts
+await saveDraft(draft)      // Save/update a section draft
+
+// Chat History
+await getChatHistory()      // Get persisted chat messages
+await saveChatMessage(msg)  // Append a message
+await clearChatHistory()    // Clear all chat history
+
+// AI Config
+saveConfig(config)          // Save to localStorage
+loadConfig(defaults)        // Load with fallback defaults
+```
+
+### AI Provider System
+
+Each provider is defined with:
+- Connection format (`anthropic` or `openai`-compatible)
+- Model list with defaults
+- API key requirements
+- Base URL configuration
+
+The universal `callAI()` function handles format differences transparently.
+
+## Usage Guide
+
+1. **Configure AI** - Go to "AI Config" in the sidebar to select your preferred AI provider and enter API key
+2. **Add Literature** - Use the Knowledge Base to add papers manually or import from databases
+3. **Topic Research** - Use the Topic Discovery module with AI keyword expansion
+4. **Design Experiments** - Break down research questions into verifiable nodes
+5. **Write Papers** - Use the Writing Assistant with AI analysis for each section
+6. **Self-Review** - Run through the checklist before submission
+
+## Tech Stack
+
+- **React 19** - UI framework
+- **Vite 7** - Build tool with HMR
+- **IndexedDB** - Client-side structured storage
+- **localStorage** - Configuration persistence
+- **CSS-in-JS** - Embedded stylesheets with CSS variables
+
+## License
+
+MIT

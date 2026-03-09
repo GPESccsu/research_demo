@@ -5,8 +5,6 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-from app.services.prompt_loader import load_prompt
-
 app = FastAPI(title="SciFlow Local Backend")
 
 app.add_middleware(
@@ -51,16 +49,14 @@ AI_PROVIDERS: Dict[str, Dict[str, Any]] = {
 
 class AICallPayload(BaseModel):
     config: Dict[str, Any]
-    promptKey: Optional[str] = None
-    systemPrompt: Optional[str] = None
+    systemPrompt: str
     userMessage: str
     maxTokens: Optional[int] = None
 
 
 class AIChatPayload(BaseModel):
     config: Dict[str, Any]
-    promptKey: Optional[str] = None
-    systemPrompt: Optional[str] = None
+    systemPrompt: str
     messages: List[Dict[str, Any]]
 
 
@@ -71,15 +67,6 @@ def build_prompt(config: Dict[str, Any], system_prompt: str) -> str:
 
 def get_model(config: Dict[str, Any]) -> str:
     return config.get("customModel") or config.get("model") or ""
-
-
-def resolve_system_prompt(prompt_key: Optional[str], fallback_prompt: Optional[str]) -> str:
-    if prompt_key:
-        try:
-            return load_prompt(prompt_key)
-        except KeyError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return fallback_prompt or ""
 
 
 async def call_provider(config: Dict[str, Any], system_prompt: str, messages: List[Dict[str, Any]], max_tokens: int) -> str:
@@ -129,28 +116,10 @@ async def call_provider(config: Dict[str, Any], system_prompt: str, messages: Li
                 "temperature": config.get("temperature", 0.7),
             }
             resp = await client.post(url, headers=headers, json=payload)
-
-            # Ollama fallback: some versions only expose native /api/chat endpoint.
-            if provider_id == "ollama" and resp.status_code == 404:
-                native_url = config.get("ollamaUrl", "http://localhost:11434").rstrip("/") + "/api/chat"
-                native_payload = {
-                    "model": model,
-                    "messages": [{"role": "system", "content": full_system}, *messages],
-                    "stream": False,
-                    "options": {
-                        "temperature": config.get("temperature", 0.7),
-                        "num_predict": max_tokens,
-                    },
-                }
-                resp = await client.post(native_url, headers=headers, json=native_payload)
-
             data = resp.json()
             if resp.status_code >= 400:
                 detail = data.get("error", {}).get("message") if isinstance(data.get("error"), dict) else data.get("error") or resp.text
                 raise HTTPException(status_code=resp.status_code, detail=str(detail))
-
-            if provider_id == "ollama" and isinstance(data.get("message"), dict):
-                return data.get("message", {}).get("content", "")
             return data.get("choices", [{}])[0].get("message", {}).get("content", "")
     except HTTPException:
         raise
@@ -170,7 +139,7 @@ async def ai_call(payload: AICallPayload) -> Dict[str, str]:
     tokens = payload.maxTokens or int(payload.config.get("maxTokens") or 1000)
     result = await call_provider(
         payload.config,
-        resolve_system_prompt(payload.promptKey, payload.systemPrompt),
+        payload.systemPrompt,
         [{"role": "user", "content": payload.userMessage}],
         tokens,
     )
@@ -180,7 +149,7 @@ async def ai_call(payload: AICallPayload) -> Dict[str, str]:
 @app.post("/api/ai/chat")
 async def ai_chat(payload: AIChatPayload) -> Dict[str, str]:
     tokens = int(payload.config.get("maxTokens") or 1000)
-    result = await call_provider(payload.config, resolve_system_prompt(payload.promptKey, payload.systemPrompt), payload.messages, tokens)
+    result = await call_provider(payload.config, payload.systemPrompt, payload.messages, tokens)
     return {"result": result}
 
 
