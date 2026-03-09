@@ -1,22 +1,15 @@
-import { useState, useEffect, useRef, createContext, useContext } from "react";
-import { saveConfig, loadConfig, getPapers, savePapers, addPaper, deletePaper, getLogs, saveLogs, addLog, getChecklist, saveChecklist, getChatHistory, saveChatMessage, clearChatHistory, getSynonymGroups, saveSynonymGroup, deleteSynonymGroup, getClips, addClip, getDrafts, saveDraft, getUIState, saveUIState, initializeDatabase, exportDatabaseSnapshot, importDatabaseSnapshot, getSearchQueries, addSearchQuery, updateSearchQuery, deleteSearchQuery } from "./db.js";
-import { AI_PROVIDERS, DEFAULT_CONFIG } from "./services/promptService.js";
-import { callAI, callAIJSON, callAIChat } from "./services/aiService.js";
-import { PROMPTS } from "./prompts/index.js";
-import SettingsPage from "./pages/SettingsPage.jsx";
-import WritingPage from "./pages/WritingPage.jsx";
+import { useState, useEffect, useRef } from "react";
+import { saveConfig, loadConfig, getPapers, savePapers, addPaper, deletePaper, getLogs, saveLogs, addLog, getChecklist, saveChecklist, getChatHistory, saveChatMessage, clearChatHistory, getClips, addClip, getUIState, saveUIState, initializeDatabase, exportDatabaseSnapshot, importDatabaseSnapshot, getSearchQueries, addSearchQuery, updateSearchQuery, deleteSearchQuery } from "./db";
+import { AI_PROVIDERS, DEFAULT_CONFIG } from "./services/promptService";
+import { callAI, callAIJSON, callAIChat } from "./services/aiService";
+import { PROMPTS } from "./prompts/index";
+import SettingsPage from "./pages/SettingsPage";
+import WritingPage from "./pages/WritingPage";
 
 // ═══════════════════════════════════════════════════════════
 // SCIFLOW — AI-POWERED RESEARCH ASSISTANT
 // With Multi-Provider AI Configuration
 // ═══════════════════════════════════════════════════════════
-
-// ── AI Config Context ──
-const AIConfigContext = createContext(null);
-
-function useAIConfig() {
-  return useContext(AIConfigContext);
-}
 
 // ── Icons ──
 const Icons = {
@@ -841,7 +834,7 @@ export default function SciFlowApp() {
   };
 
   return (
-    <AIConfigContext.Provider value={config}>
+    <>
       <style>{CSS}</style>
       <div className="app-container">
         {sidebarOpen && <div className="sidebar-overlay" onClick={() => setSidebarOpen(false)} />}
@@ -899,6 +892,6 @@ export default function SciFlowApp() {
         </main>
       </div>
       <AIChatDrawer config={config} />
-    </AIConfigContext.Provider>
+    </>
   );
 }

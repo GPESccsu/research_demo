@@ -1,6 +1,6 @@
 import { useState } from "react";
-import { callAIJSON } from "../../services/aiService.js";
-import { PROMPTS } from "../../prompts/index.js";
+import { callAIJSON } from "../../services/aiService";
+import { PROMPTS } from "../../prompts/index";
 
 const Sparkle = () => <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l2.4 7.2L22 12l-7.6 2.8L12 22l-2.4-7.2L2 12l7.6-2.8z"/></svg>;
 
