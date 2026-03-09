@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { AI_PROVIDERS } from "../services/promptService.js";
 import { callAI } from "../services/aiService.js";
 import { fetchOllamaModels } from "../services/ollamaService.js";
-import { PROMPTS } from "../prompts/index.js";
+import { PROMPTS, TEST_USER_MESSAGE } from "../prompts/index.js";
 
 // ── Icons used by SettingsPage ──
 const Icons = {
@@ -29,7 +29,7 @@ export default function SettingsPage({ config, setConfig }) {
 
   const testConnection = async () => {
     setTestStatus("loading"); setTestMsg("正在测试连接...");
-    const result = await callAI(config, PROMPTS.TEST_SYSTEM, PROMPTS.TEST_USER, 100);
+    const result = await callAI(config, PROMPTS.TEST_SYSTEM, TEST_USER_MESSAGE, 100);
     if (result) { setTestStatus("success"); setTestMsg(`连接成功！回复: "${result.slice(0, 60)}"`); }
     else { setTestStatus("error"); setTestMsg("连接失败，请检查配置。"); }
   };

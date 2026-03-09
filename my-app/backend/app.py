@@ -5,6 +5,8 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
+from app.services.prompt_loader import load_prompt
+
 app = FastAPI(title="SciFlow Local Backend")
 
 app.add_middleware(
@@ -49,14 +51,16 @@ AI_PROVIDERS: Dict[str, Dict[str, Any]] = {
 
 class AICallPayload(BaseModel):
     config: Dict[str, Any]
-    systemPrompt: str
+    promptKey: Optional[str] = None
+    systemPrompt: Optional[str] = None
     userMessage: str
     maxTokens: Optional[int] = None
 
 
 class AIChatPayload(BaseModel):
     config: Dict[str, Any]
-    systemPrompt: str
+    promptKey: Optional[str] = None
+    systemPrompt: Optional[str] = None
     messages: List[Dict[str, Any]]
 
 
@@ -67,6 +71,15 @@ def build_prompt(config: Dict[str, Any], system_prompt: str) -> str:
 
 def get_model(config: Dict[str, Any]) -> str:
     return config.get("customModel") or config.get("model") or ""
+
+
+def resolve_system_prompt(prompt_key: Optional[str], fallback_prompt: Optional[str]) -> str:
+    if prompt_key:
+        try:
+            return load_prompt(prompt_key)
+        except KeyError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return fallback_prompt or ""
 
 
 async def call_provider(config: Dict[str, Any], system_prompt: str, messages: List[Dict[str, Any]], max_tokens: int) -> str:
@@ -139,7 +152,7 @@ async def ai_call(payload: AICallPayload) -> Dict[str, str]:
     tokens = payload.maxTokens or int(payload.config.get("maxTokens") or 1000)
     result = await call_provider(
         payload.config,
-        payload.systemPrompt,
+        resolve_system_prompt(payload.promptKey, payload.systemPrompt),
         [{"role": "user", "content": payload.userMessage}],
         tokens,
     )
@@ -149,7 +162,7 @@ async def ai_call(payload: AICallPayload) -> Dict[str, str]:
 @app.post("/api/ai/chat")
 async def ai_chat(payload: AIChatPayload) -> Dict[str, str]:
     tokens = int(payload.config.get("maxTokens") or 1000)
-    result = await call_provider(payload.config, payload.systemPrompt, payload.messages, tokens)
+    result = await call_provider(payload.config, resolve_system_prompt(payload.promptKey, payload.systemPrompt), payload.messages, tokens)
     return {"result": result}
 
 
