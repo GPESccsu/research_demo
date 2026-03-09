@@ -313,6 +313,7 @@ function TopicPage({ config }) {
   const [kw, setKw] = useState("锌空气电池催化剂");
   const [aiKw, setAiKw] = useState(null);
   const [ld, setLd] = useState(false);
+  const [expandMsg, setExpandMsg] = useState("");
   const [searching, setSearching] = useState(false);
   const [searchMsg, setSearchMsg] = useState("");
   const [currentQuery, setCurrentQuery] = useState("");
@@ -320,7 +321,40 @@ function TopicPage({ config }) {
   const [editingName, setEditingName] = useState(null);
   const [tempName, setTempName] = useState("");
   const defs = [{word:"zinc-air battery",type:"同义词"},{word:"Zn-air battery",type:"同义词"},{word:"metal-air battery",type:"近义词"},{word:"oxygen reduction reaction",type:"跨学科"},{word:"bifunctional catalyst",type:"相关表达"}];
-  const expand = async()=>{if(!kw.trim())return;setLd(true);setAiKw(null);const r=await callAIJSON(config,PROMPTS.KEYWORD_EXPANDER,`扩展:"${kw}"`);setLd(false);if(r?.keywords)setAiKw(r.keywords);};
+  const normalizeKeywords = (payload) => {
+    if (!payload) return [];
+    const raw = Array.isArray(payload) ? payload : payload.keywords;
+    if (!Array.isArray(raw)) return [];
+    return raw
+      .map((item) => {
+        if (typeof item === "string") return { word: item.trim(), type: "AI扩展" };
+        if (!item || typeof item !== "object") return null;
+        const word = String(item.word || item.keyword || "").trim();
+        if (!word) return null;
+        return {
+          word,
+          type: String(item.type || "AI扩展").trim() || "AI扩展",
+          reason: item.reason ? String(item.reason) : undefined,
+        };
+      })
+      .filter(Boolean);
+  };
+
+  const expand = async()=>{
+    if(!kw.trim()) return;
+    setLd(true);
+    setExpandMsg("");
+    setAiKw(null);
+    const r = await callAIJSON(config,PROMPTS.KEYWORD_EXPANDER,`扩展:"${kw}"`);
+    const next = normalizeKeywords(r);
+    setLd(false);
+    if (next.length) {
+      setAiKw(next);
+      setExpandMsg(`已通过 ${AI_PROVIDERS[config.provider]?.name || "当前模型"} 扩展 ${next.length} 个关键词。`);
+      return;
+    }
+    setExpandMsg("AI 扩展失败：未解析到关键词。请检查模型配置；若使用本地大模型，请确认 Ollama 已启动且已拉取模型。");
+  };
 
   const refreshQueries = async () => {
     const queries = await getSearchQueries();
@@ -379,6 +413,7 @@ function TopicPage({ config }) {
         <div style={{display:'flex',gap:8,marginBottom:16}}><input className="input-field" value={kw} onChange={e=>setKw(e.target.value)} placeholder="输入核心关键词..." onKeyDown={e=>e.key==='Enter'&&expand()}/><button className="btn btn-ai" onClick={expand} disabled={ld}><Icons.Sparkle/>{ld?'分析中...':'AI 扩展'}</button></div>
         {ld&&<div style={{display:'flex',flexDirection:'column',gap:8}}>{[1,2,3].map(i=><div key={i} className="shimmer-loading" style={{height:32,width:`${70+i*8}%`}}/>)}</div>}
         {!ld&&<div className="keyword-chips">{kws.map((k,i)=>(<div key={i} className={`keyword-chip ${cc(k.type)}`} title={k.reason||k.type}><span>{k.word}</span><span className="chip-freq">{k.type}</span></div>))}</div>}
+        {!!expandMsg&&<div style={{marginTop:10,fontSize:12,color:aiKw?'var(--accent-green)':'var(--accent-orange)'}}>{expandMsg}</div>}
         {aiKw&&<div className="ai-summary-panel" style={{marginTop:14}}><div className="ai-summary-header"><Icons.Sparkle/>AI 扩展完成</div><div className="ai-summary-text">已扩展 {aiKw.length} 个学术关键词。</div></div>}
       </div></div></div>
       <div><div className="panel fade-in delay-1"><div className="panel-header"><Icons.Globe/>检索式构建器</div><div className="panel-body">
